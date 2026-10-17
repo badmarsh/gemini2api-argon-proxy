@@ -6,6 +6,7 @@ import sys
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Request
@@ -580,4 +581,228 @@ async def cleanup_web_chats(req: CleanupWebChatsRequest = None):
     _cleanup_bg_tasks.add(task)
     task.add_done_callback(_cleanup_bg_tasks.discard)
     return {"status": "started", "message": "Cleanup started in background; check server logs for results"}
+
+
+# ---------------------------------------------------------------------------
+# Babysit Experiment Monitoring Endpoints
+# ---------------------------------------------------------------------------
+
+def _get_runs_root() -> Path:
+    candidate = Path("/app/runs")
+    if candidate.exists() and candidate.is_dir():
+        return candidate
+    local_candidate = Path(os.getcwd()) / "runs"
+    local_candidate.mkdir(parents=True, exist_ok=True)
+    return local_candidate
+
+
+def _safe_run_dir(run_id: str) -> Optional[Path]:
+    import re
+    if not re.match(r"^[A-Za-z0-9_.-]+$", run_id):
+        return None
+    root = _get_runs_root()
+    target = (root / run_id).resolve()
+    try:
+        target.relative_to(root.resolve())
+    except ValueError:
+        return None
+    return target
+
+
+class KillSwitchRequest(BaseModel):
+    run_id: Optional[str] = None
+    action: str = "stop"
+
+
+@router.get("/babysit/runs")
+async def list_babysit_runs():
+    """List all available babysit experiment runs with summary status."""
+    import json
+    from pathlib import Path
+    root = _get_runs_root()
+    runs = []
+    if not root.exists():
+        return {"runs": [], "global_stop": False}
+
+    global_stop = (Path("STOP_BABYSIT").exists() or (root / "STOP_BABYSIT").exists())
+
+    for item in root.iterdir():
+        if not item.is_dir():
+            continue
+        run_id = item.name
+        tasks_file = item / "tasks.jsonl"
+        findings_file = item / "findings.jsonl"
+        trace_file = item / "argon_trace.jsonl"
+        metrics_file = item / "metrics.jsonl"
+        summary_file = item / "summary.json"
+        run_stop = (item / "STOP_BABYSIT").exists() or (item / "STOP").exists()
+
+        task_count = 0
+        task_completed = 0
+        task_failed = 0
+        if tasks_file.exists():
+            try:
+                for line in tasks_file.read_text(encoding="utf-8", errors="replace").splitlines():
+                    if line.strip():
+                        task_count += 1
+                        try:
+                            obj = json.loads(line)
+                            status = obj.get("status", "")
+                            if status == "completed":
+                                task_completed += 1
+                            elif status == "failed":
+                                task_failed += 1
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+        findings_count = 0
+        crit_count = 0
+        if findings_file.exists():
+            try:
+                for line in findings_file.read_text(encoding="utf-8", errors="replace").splitlines():
+                    if line.strip():
+                        findings_count += 1
+                        try:
+                            f_obj = json.loads(line)
+                            if f_obj.get("severity") in ("CRITICAL", "HIGH"):
+                                crit_count += 1
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+        trace_count = 0
+        if trace_file.exists():
+            try:
+                trace_count = sum(1 for line in trace_file.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip())
+            except Exception:
+                pass
+
+        summary_data = None
+        if summary_file.exists():
+            try:
+                summary_data = json.loads(summary_file.read_text(encoding="utf-8", errors="replace"))
+            except Exception:
+                pass
+
+        mtime = item.stat().st_mtime
+        runs.append({
+            "run_id": run_id,
+            "mtime": mtime,
+            "mtime_iso": datetime.fromtimestamp(mtime).isoformat(),
+            "task_count": task_count,
+            "task_completed": task_completed,
+            "task_failed": task_failed,
+            "findings_count": findings_count,
+            "critical_findings": crit_count,
+            "trace_events": trace_count,
+            "stopped": bool(global_stop or run_stop),
+            "summary": summary_data,
+        })
+
+    runs.sort(key=lambda r: r["mtime"], reverse=True)
+    return {"runs": runs, "global_stop": global_stop}
+
+
+@router.get("/babysit/runs/{run_id}")
+async def get_babysit_run(run_id: str):
+    """Get full details, tasks, findings, and traces for a specific run."""
+    import json
+    from pathlib import Path
+    target = _safe_run_dir(run_id)
+    if not target or not target.exists() or not target.is_dir():
+        return JSONResponse(status_code=404, content={"error": f"Run '{run_id}' not found"})
+
+    def read_jsonl(p: Path, max_lines: int = 1000):
+        if not p.exists():
+            return []
+        lines = []
+        try:
+            for l in p.read_text(encoding="utf-8", errors="replace").splitlines():
+                if l.strip():
+                    try:
+                        lines.append(json.loads(l))
+                    except Exception:
+                        pass
+        except Exception as e:
+            logger.warning(f"Error reading {p}: {e}")
+        if len(lines) > max_lines:
+            return lines[-max_lines:]
+        return lines
+
+    tasks = read_jsonl(target / "tasks.jsonl")
+    findings = read_jsonl(target / "findings.jsonl")
+    trace = read_jsonl(target / "argon_trace.jsonl", max_lines=200)
+    metrics = read_jsonl(target / "metrics.jsonl", max_lines=100)
+
+    summary = None
+    summary_file = target / "summary.json"
+    if summary_file.exists():
+        try:
+            summary = json.loads(summary_file.read_text(encoding="utf-8", errors="replace"))
+        except Exception:
+            pass
+
+    root = _get_runs_root()
+    is_stopped = (
+        (target / "STOP_BABYSIT").exists()
+        or (target / "STOP").exists()
+        or (root / "STOP_BABYSIT").exists()
+        or Path("STOP_BABYSIT").exists()
+    )
+
+    return {
+        "run_id": run_id,
+        "stopped": is_stopped,
+        "tasks": tasks,
+        "findings": findings,
+        "trace": trace,
+        "metrics": metrics,
+        "summary": summary,
+    }
+
+
+@router.post("/babysit/kill-switch")
+async def toggle_kill_switch(req: KillSwitchRequest):
+    """Trigger Emergency Stop or Resume for babysit execution."""
+    from pathlib import Path
+    root = _get_runs_root()
+    action = req.action.lower()
+
+    if action == "stop":
+        try:
+            Path("STOP_BABYSIT").write_text("STOPPED_BY_ADMIN_UI\n", encoding="utf-8")
+            (root / "STOP_BABYSIT").write_text("STOPPED_BY_ADMIN_UI\n", encoding="utf-8")
+            if req.run_id:
+                target = _safe_run_dir(req.run_id)
+                if target and target.exists():
+                    (target / "STOP_BABYSIT").write_text("STOPPED_BY_ADMIN_UI\n", encoding="utf-8")
+            return {"status": "ok", "action": "stop", "message": "Kill-switch activated: STOP_BABYSIT created."}
+        except Exception as e:
+            return JSONResponse(status_code=500, content={"error": str(e)})
+
+    elif action == "resume":
+        removed = []
+        for p in [Path("STOP_BABYSIT"), root / "STOP_BABYSIT"]:
+            if p.exists():
+                try:
+                    p.unlink()
+                    removed.append(str(p))
+                except Exception:
+                    pass
+        if req.run_id:
+            target = _safe_run_dir(req.run_id)
+            if target and target.exists():
+                for p in [target / "STOP_BABYSIT", target / "STOP"]:
+                    if p.exists():
+                        try:
+                            p.unlink()
+                            removed.append(str(p))
+                        except Exception:
+                            pass
+        return {"status": "ok", "action": "resume", "message": "Kill-switch released.", "removed": removed}
+    else:
+        return JSONResponse(status_code=400, content={"error": "Invalid action. Use 'stop' or 'resume'."})
 

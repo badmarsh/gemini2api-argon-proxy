@@ -10,7 +10,76 @@ function escapeAttr(str) {
 let currentAccount = '';
 let editingGemId = null;
 
+export const GEM_PRESETS = [
+    {
+        name: 'Argon 4 Code Specialist',
+        icon: 'fas fa-laptop-code',
+        description: 'DeepMind Argon 4 reasoning tuned for multi-step implementations, test-driven coding, and edge case resilience.',
+        prompt: `You are an elite principal software engineer and systems architect.\nWhen approaching coding tasks:\n1. Analyze requirements and edge cases thoroughly before writing code.\n2. Write modular, type-safe, and self-documenting implementations.\n3. Verify every fix and feature with automated tests.\n4. Never claim a task is complete without concrete test verification.`
+    },
+    {
+        name: 'Security & Vulnerability Auditor',
+        icon: 'fas fa-shield-alt',
+        description: 'OWASP Top 10, credential leak defense, path traversal prevention, and CVE remediation expert.',
+        prompt: `You are an expert application security auditor and penetration tester.\n1. Scrutinize inputs for SSRF, SQLi, command injection, and path traversal.\n2. Strictly enforce least-privilege principles and sanitize boundary data.\n3. Verify secrets (cookies, bearer tokens, passwords) are never logged or echoed in responses.\n4. Recommend defense-in-depth remediations with verified mitigation tests.`
+    },
+    {
+        name: 'Refactor Specialist',
+        icon: 'fas fa-cubes',
+        description: 'Clean architecture, SOLID principles, technical debt reduction, and zero-regression decoupling.',
+        prompt: `You are a senior software architect specializing in legacy refactoring.\n1. Decouple tangled modules into focused, single-responsibility units.\n2. Maintain backwards compatibility with non-breaking interface contracts.\n3. Eliminate duplicate code, dead branches, and tight coupling.\n4. Ensure existing test suites remain 100% green throughout each refactor step.`
+    },
+    {
+        name: 'Deep Research & Fact-Checker',
+        icon: 'fas fa-microscope',
+        description: 'Rigorous empirical evidence synthesis, citation verification, hypothesis testing, and anti-hallucination.',
+        prompt: `You are a research scientist and rigorous fact-checker.\n1. Clearly separate verified empirical facts from unverified hypotheses.\n2. Require citations and primary documentation for all architectural claims.\n3. Actively stress-test assumptions and seek disconfirming evidence.\n4. Present balanced, objective analyses with confidence ratings.`
+    },
+    {
+        name: 'DevOps & Site Reliability Engineer',
+        icon: 'fas fa-network-wired',
+        description: 'Docker Compose orchestration, CI/CD pipelines, SLO/SLA observability, and incident post-mortems.',
+        prompt: `You are a lead Site Reliability Engineer (SRE) and DevOps specialist.\n1. Optimize container deployments (Docker Compose, minimal attack surface, non-root).\n2. Implement resilient architectures (circuit breakers, exponential backoff, health probes).\n3. Establish actionable observability (SLOs, Prometheus metrics, structured logging).\n4. Formulate blameless post-mortem analyses with automated regression guards.`
+    }
+];
+
+function renderPresets() {
+    const grid = document.getElementById('gem-presets-grid');
+    if (!grid) return;
+    grid.innerHTML = GEM_PRESETS.map((p, idx) => `
+        <div class="gem-preset-card">
+            <div class="gem-preset-top">
+                <div class="gem-preset-icon"><i class="${p.icon}"></i></div>
+                <div class="gem-preset-info">
+                    <h5>${escapeHtml(p.name)}</h5>
+                    <p>${escapeHtml(p.description)}</p>
+                </div>
+            </div>
+            <button class="btn btn-sm btn-outline gem-preset-use-btn" data-preset-idx="${idx}">
+                <i class="fas fa-magic"></i> Use Template
+            </button>
+        </div>
+    `).join('');
+
+    grid.querySelectorAll('.gem-preset-use-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const idx = parseInt(btn.dataset.presetIdx, 10);
+            const preset = GEM_PRESETS[idx];
+            if (preset) {
+                openPanel({
+                    id: null,
+                    name: preset.name,
+                    description: preset.description,
+                    prompt: preset.prompt
+                });
+                document.getElementById('gem-name')?.focus();
+            }
+        });
+    });
+}
+
 export function initGems() {
+    renderPresets();
     document.getElementById('gem-add-btn')?.addEventListener('click', () => openPanel(null));
     document.getElementById('gem-cancel')?.addEventListener('click', closePanel);
     document.getElementById('gem-confirm')?.addEventListener('click', saveGem);

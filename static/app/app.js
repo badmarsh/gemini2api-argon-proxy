@@ -11,6 +11,7 @@ import { initLogs, loadLogs } from './logs.js';
 import { initSettings, loadSettings } from './settings.js';
 import { initApiKeys, loadApiKeys } from './api-keys.js';
 import { initGems, loadAccountsThenGems } from './gems.js';
+import { initBabysit, loadBabysit } from './babysit.js';
 import { initI18n, t } from './i18n.js';
 import { initLanguageSwitcher } from './language-switcher.js';
 import { APP_CONSTANTS } from './config/constants.js';
@@ -19,6 +20,7 @@ import { validateAccountPayload } from './services/validationService.js';
 import { accountService } from './services/accountService.js';
 import { telemetryService } from './services/telemetryService.js';
 import { CanvasEngine } from './canvas-engine.js';
+import { openPayloadInspector } from './payload-inspector.js';
 
 let isAppInitialized = false;
 
@@ -146,6 +148,9 @@ async function loadSectionData(sectionId) {
                 break;
             case 'gems':
                 await loadAccountsThenGems();
+                break;
+            case 'babysit':
+                await loadBabysit();
                 break;
         }
     } catch (error) {
@@ -923,7 +928,29 @@ function renderRequestDetail(timeline) {
         <ul class="explorer-markers">${markers || `<li class="text-muted">${escapeHtml(t('dashboard.explorerNoData'))}</li>`}</ul>
         <dl class="slo-metrics">${rows.map(row =>
             `<div class="slo-metric"><dt>${escapeHtml(row.label)}</dt><dd>${escapeHtml(row.value)}</dd></div>`
-        ).join('')}</dl>`;
+        ).join('')}</dl>
+        <div style="margin-top: 1rem;">
+            <button class="btn btn-sm btn-primary explorer-inspect-btn" id="explorerInspectBtn">
+                <i class="fas fa-search-plus"></i> Inspect Payload (In / Forwarded / Out)
+            </button>
+        </div>`;
+
+    const inspectBtn = el.querySelector('#explorerInspectBtn');
+    if (inspectBtn) {
+        inspectBtn.addEventListener('click', async () => {
+            let recordToInspect = timeline;
+            if (timeline.request_id) {
+                try {
+                    const logsData = await apiCall('GET', `/admin/logs?search=${encodeURIComponent(timeline.request_id)}&limit=1`);
+                    if (logsData && logsData.records && logsData.records.length > 0) {
+                        const fullLog = await apiCall('GET', `/admin/logs/${encodeURIComponent(logsData.records[0].id)}`);
+                        if (fullLog) recordToInspect = fullLog;
+                    }
+                } catch (_) {}
+            }
+            openPayloadInspector(recordToInspect);
+        });
+    }
 }
 
 // ============================================================================
@@ -1995,6 +2022,38 @@ function initEventListeners() {
         breakerReset.addEventListener('click', () => resetArgonBreaker());
     }
 
+    // Endpoint snippets tab switching & copy
+    const snippetTabs = document.querySelectorAll('#endpoint-snippet-tabs .btn');
+    snippetTabs.forEach(btn => {
+        if (!btn._bound) {
+            btn._bound = true;
+            btn.addEventListener('click', () => {
+                snippetTabs.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                const targetSnippet = btn.dataset.snippet;
+                document.querySelectorAll('.quick-endpoint-snippet').forEach(s => {
+                    s.style.display = s.id === `snippet-${targetSnippet}` ? 'block' : 'none';
+                });
+            });
+        }
+    });
+
+    document.querySelectorAll('.snippet-copy-btn').forEach(btn => {
+        if (!btn._bound) {
+            btn._bound = true;
+            btn.addEventListener('click', () => {
+                const pre = btn.closest('.snippet-code-wrap')?.querySelector('pre');
+                if (pre && pre.textContent) {
+                    navigator.clipboard.writeText(pre.textContent.trim()).then(() => {
+                        const originalHtml = btn.innerHTML;
+                        btn.innerHTML = '<i class="fas fa-check"></i> Copied!';
+                        setTimeout(() => { btn.innerHTML = originalHtml; }, 2000);
+                    });
+                }
+            });
+        }
+    });
+
     // Confirm add account
     const confirmBtn = document.getElementById('confirmAddAccount');
     if (confirmBtn) {
@@ -2183,6 +2242,7 @@ async function initApp() {
     initSettings();
     initApiKeys();
     initGems();
+    initBabysit();
     startDashboardAutoRefresh();
 }
 

@@ -1,0 +1,134 @@
+<link rel="stylesheet" href="components/section-babysit.css?v=1">
+<script type="module" src="app/babysit.js"></script>
+
+<!-- Babysit Monitor Section -->
+<section id="babysit" class="section" aria-labelledby="babysit-title">
+    <div class="section-header">
+        <h2 id="babysit-title"><i class="fas fa-robot"></i> Babysit Monitor</h2>
+        <div class="section-header-actions">
+            <div class="babysit-run-picker">
+                <label for="babysit-run-select" class="sr-only">Select Experiment Run</label>
+                <select id="babysit-run-select" title="Experiment Run">
+                    <option value="">Loading runs...</option>
+                </select>
+            </div>
+            <button class="btn btn-sm btn-outline" id="babysit-refresh-btn" title="Refresh Run Data">
+                <i class="fas fa-sync-alt"></i> Refresh
+            </button>
+            <button class="btn btn-sm btn-outline" id="babysit-poll-toggle" title="Pause or Resume Live Polling">
+                <i class="fas fa-pause"></i> Auto-poll: On
+            </button>
+        </div>
+    </div>
+
+    <!-- Live Status & Kill-Switch Banner -->
+    <div class="babysit-hero-card" id="babysit-hero-card">
+        <div class="babysit-hero-info">
+            <div class="babysit-hero-title-row">
+                <span class="babysit-status-badge status-running" id="babysit-status-badge">
+                    <i class="fas fa-circle"></i> <span id="babysit-status-text">INITIALIZING</span>
+                </span>
+                <h3 id="babysit-current-run-id">No Run Selected</h3>
+            </div>
+            <p id="babysit-run-meta" class="text-secondary" style="font-size:0.8125rem; margin-top:0.25rem;">
+                Orchestrator (<code class="code-inline">gemini-3.8-flash</code>) &rarr; Agent Argon (<code class="code-inline">gemini-4-argon</code>) &larr; Monitor (<code class="code-inline">gemini-3.8-flash</code>)
+            </p>
+        </div>
+        <div class="babysit-hero-actions">
+            <button class="btn btn-danger" id="babysit-kill-switch-btn" title="Emergency Stop / Resume Kill-Switch">
+                <i class="fas fa-skull-crossbones"></i> Emergency Stop
+            </button>
+        </div>
+    </div>
+
+    <!-- KPI Metric Cards -->
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-icon"><i class="fas fa-tasks"></i></div>
+            <div class="stat-info">
+                <h3 id="bb-total-tasks">0</h3>
+                <p>Total Tasks</p>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon" style="color:var(--success-color); background:var(--success-10);"><i class="fas fa-check-circle"></i></div>
+            <div class="stat-info">
+                <h3 id="bb-completed-tasks">0</h3>
+                <p>Completed Tasks</p>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon" style="color:var(--danger-color); background:var(--danger-10);"><i class="fas fa-times-circle"></i></div>
+            <div class="stat-info">
+                <h3 id="bb-failed-tasks">0</h3>
+                <p>Failed Tasks</p>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon" style="color:var(--warning-color); background:var(--warning-15);"><i class="fas fa-shield-alt"></i></div>
+            <div class="stat-info">
+                <h3 id="bb-findings-count">0</h3>
+                <p>Monitor Findings</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Monitor Tabbed Workspace -->
+    <div class="babysit-workspace">
+        <div class="babysit-tabs" role="tablist">
+            <button class="babysit-tab-btn active" data-tab="tasks" role="tab" aria-selected="true">
+                <i class="fas fa-list-check"></i> Tasks Feed (<span id="bb-tab-task-count">0</span>)
+            </button>
+            <button class="babysit-tab-btn" data-tab="trace" role="tab" aria-selected="false">
+                <i class="fas fa-terminal"></i> Argon 4 Live Trace (<span id="bb-tab-trace-count">0</span>)
+            </button>
+            <button class="babysit-tab-btn" data-tab="findings" role="tab" aria-selected="false">
+                <i class="fas fa-triangle-exclamation"></i> Monitor Findings (<span id="bb-tab-finding-count">0</span>)
+            </button>
+        </div>
+
+        <div class="babysit-tab-content">
+            <!-- Tasks Panel -->
+            <div class="babysit-panel active" id="bb-panel-tasks" role="tabpanel">
+                <div class="babysit-panel-header">
+                    <h4>Orchestrator Task Stream</h4>
+                    <span class="text-secondary" style="font-size:0.75rem;">Tasks devised by Orchestrator for Argon 4</span>
+                </div>
+                <div class="babysit-task-list" id="bb-task-list">
+                    <div class="babysit-empty-state">
+                        <i class="fas fa-robot"></i>
+                        <p>No tasks recorded yet for this run.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Trace Panel -->
+            <div class="babysit-panel" id="bb-panel-trace" role="tabpanel">
+                <div class="babysit-panel-header">
+                    <h4>Argon 4 Live Execution Trace</h4>
+                    <span class="text-secondary" style="font-size:0.75rem;">Step-by-step thoughts, tool executions, and outputs</span>
+                </div>
+                <div class="babysit-trace-log" id="bb-trace-log">
+                    <div class="babysit-empty-state">
+                        <i class="fas fa-terminal"></i>
+                        <p>No trace events recorded yet.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Findings Panel -->
+            <div class="babysit-panel" id="bb-panel-findings" role="tabpanel">
+                <div class="babysit-panel-header">
+                    <h4>Independent Monitor Findings</h4>
+                    <span class="text-secondary" style="font-size:0.75rem;">Real-time anomalies, substitutions, and SLO violations detected by Monitor</span>
+                </div>
+                <div class="babysit-findings-feed" id="bb-findings-feed">
+                    <div class="babysit-empty-state">
+                        <i class="fas fa-shield-alt"></i>
+                        <p>No monitor findings logged yet.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>

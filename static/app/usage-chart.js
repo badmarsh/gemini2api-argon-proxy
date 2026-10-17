@@ -118,6 +118,69 @@ async function loadSummary() {
     }
 }
 
+function updateContextualSummary(data) {
+    const reqEl = document.getElementById('us-total-requests');
+    const errEl = document.getElementById('us-error-rate');
+    const latEl = document.getElementById('us-avg-latency');
+    const rotEl = document.getElementById('us-rotation-rate');
+
+    if (!data || data.length === 0) return;
+
+    let totalRequests = 0;
+    let totalErrors = 0;
+    let totalLatencySum = 0;
+    let latencyCount = 0;
+    let rotSuccess = 0;
+    let rotFailure = 0;
+    const modelTotals = {};
+
+    for (const b of data) {
+        const rc = b.request_count || 0;
+        const ec = b.error_count || 0;
+        totalRequests += rc;
+        totalErrors += ec;
+
+        if (b.avg_latency_ms && rc > 0) {
+            totalLatencySum += b.avg_latency_ms * rc;
+            latencyCount += rc;
+        } else if (b.avg_latency_ms) {
+            totalLatencySum += b.avg_latency_ms;
+            latencyCount += 1;
+        }
+
+        rotSuccess += b.rotation_success || 0;
+        rotFailure += b.rotation_failure || 0;
+
+        if (b.model_requests) {
+            for (const [m, c] of Object.entries(b.model_requests)) {
+                modelTotals[m] = (modelTotals[m] || 0) + c;
+            }
+        }
+    }
+
+    if (reqEl) reqEl.textContent = formatNumber(totalRequests);
+
+    if (errEl) {
+        const errRate = totalRequests > 0 ? ((totalErrors / totalRequests) * 100).toFixed(1) : '0';
+        errEl.textContent = errRate + '%';
+    }
+
+    if (latEl) {
+        const avgLat = latencyCount > 0 ? Math.round(totalLatencySum / latencyCount) : 0;
+        latEl.textContent = avgLat + 'ms';
+    }
+
+    if (rotEl) {
+        const rotTotal = rotSuccess + rotFailure;
+        const rotRate = rotTotal > 0 ? Math.round((rotSuccess / rotTotal) * 100) : 0;
+        rotEl.textContent = rotRate + '%';
+    }
+
+    if (Object.keys(modelTotals).length > 0) {
+        renderModelTable(modelTotals);
+    }
+}
+
 async function loadHistory() {
     const container = document.getElementById('us-chart-container');
     if (!container) return;
@@ -134,6 +197,7 @@ async function loadHistory() {
             container.innerHTML = '<div class="empty-chart"><i class="fas fa-chart-bar"></i><p>No data</p></div>';
             return;
         }
+        updateContextualSummary(data);
         renderChart(container, data);
     } catch (e) {
         container.innerHTML = '<div class="empty-chart"><i class="fas fa-exclamation-circle"></i><p>Failed to load</p></div>';

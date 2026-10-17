@@ -8,9 +8,11 @@ import { escapeHtml, showToast } from './utils.js';
 import { t } from './i18n.js';
 import { APP_CONSTANTS } from './config/constants.js';
 import { RingBuffer } from './services/telemetryService.js';
+import { openPayloadInspector } from './payload-inspector.js';
 
 let pollTimer = null;
 let currentDirection = 'all';
+let currentTrafficType = 'ai';
 let currentSearch = '';
 let currentOffset = 0;
 const PAGE_SIZE = APP_CONSTANTS.LIMITS.PAGE_SIZE_LOGS;
@@ -30,6 +32,18 @@ export function initLogs() {
 }
 
 function initLogControls() {
+    const trafficBtns = document.querySelectorAll('#log-traffic-type .btn');
+    trafficBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            trafficBtns.forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            currentTrafficType = btn.dataset.value;
+            currentOffset = 0;
+            consecutiveErrors = 0;
+            loadLogs();
+        });
+    });
+
     const dirBtns = document.querySelectorAll('#log-direction .btn');
     dirBtns.forEach(btn => {
         btn.addEventListener('click', () => {
@@ -186,8 +200,12 @@ export async function loadLogs(resetCircuitBreaker = true) {
         const records = data.records || [];
         clientLogBuffer.pushMany(records);
 
-        renderTable(records);
-        renderPagination(total, currentOffset);
+        const displayedRecords = currentTrafficType === 'ai'
+            ? records.filter(isGenerativeAiRecord)
+            : records;
+
+        renderTable(displayedRecords);
+        renderPagination(currentTrafficType === 'ai' ? displayedRecords.length : total, currentOffset);
     } catch (e) {
         if (e.name !== 'AbortError') {
             consecutiveErrors++;
@@ -291,6 +309,18 @@ function renderPagination(total, offset) {
     if (nextBtn) nextBtn.disabled = offset + PAGE_SIZE >= total;
 }
 
+function isGenerativeAiRecord(r) {
+    if (!r) return false;
+    const p = String(r.path || '').toLowerCase();
+    if (p.includes('/v1beta/') || p.includes('/v1/chat/completions') || p.includes('/v1/messages') || p.includes('/v1/completions') || p.includes('/v1/responses') || p.includes('/v1/embeddings')) {
+        return true;
+    }
+    if (r.model && !p.includes('/health') && !p.includes('/admin/')) {
+        return true;
+    }
+    return false;
+}
+
 async function selectRecord(id) {
     selectedRecordId = id;
     const rows = document.querySelectorAll('.log-row');
@@ -303,10 +333,12 @@ async function selectRecord(id) {
             timeout: APP_CONSTANTS.TIMEOUTS.API_DEFAULT
         });
         showDetail(record);
+        openPayloadInspector(record);
     } catch (_) {
         const buffered = clientLogBuffer.getItems().find(r => String(r.id) === String(id));
         if (buffered) {
             showDetail(buffered);
+            openPayloadInspector(buffered);
         }
     }
 }

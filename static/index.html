@@ -7,8 +7,9 @@
     <meta name="description" content="Gemini2API Management Console">
     <title>Gemini2API - Admin Console</title>
     <link rel="icon" type="image/png" href="components/logo.png?v=1">
-    <link rel="stylesheet" href="app/base.css?v=6">
+    <link rel="stylesheet" href="app/base.css?v=7">
     <link rel="stylesheet" href="app/mobile.css?v=3">
+    <link rel="stylesheet" href="app/payload-inspector.css?v=1">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
           integrity="sha512-iecdLmaskl7CVkqkXNQ/ZH/XLlvWZOJyj7Yy7tcenmpD1ypASozpmT/E0iPtmFIB46ZmdtAc9eNBvH0H/ZpiBw=="
           crossorigin="anonymous" referrerpolicy="no-referrer">
@@ -17,8 +18,13 @@
         (function () {
             try {
                 var saved = localStorage.getItem('gemini2api_theme');
-                var dark = saved ? saved === 'dark' : (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
-                if (dark) document.documentElement.setAttribute('data-theme', 'dark');
+                if (saved) {
+                    if (saved === 'dark') saved = 'vercel-dark';
+                    if (saved === 'light') saved = 'vercel-light';
+                    document.documentElement.setAttribute('data-theme', saved);
+                } else if (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) {
+                    document.documentElement.setAttribute('data-theme', 'vercel-dark');
+                }
             } catch (e) {}
         })();
     </script>
@@ -54,6 +60,6 @@
             }
         })();
     </script>
-    <script type="module" src="app/app.js?v=18"></script>
+    <script type="module" src="app/app.js?v=20"></script>
 </body>
 </html>

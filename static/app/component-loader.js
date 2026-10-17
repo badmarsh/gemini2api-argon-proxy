@@ -115,6 +115,7 @@ async function initializeComponents() {
             { path: `${basePath}section-playground.html`, container: '#content-container', position: 'beforeend', fallbackId: 'playground' },
             { path: `${basePath}section-usage-stats.html`, container: '#content-container', position: 'beforeend', fallbackId: 'usage-stats' },
             { path: `${basePath}section-logs.html`, container: '#content-container', position: 'beforeend', fallbackId: 'logs' },
+            { path: `${basePath}section-babysit.html`, container: '#content-container', position: 'beforeend', fallbackId: 'babysit' },
             { path: `${basePath}section-api-keys.html`, container: '#content-container', position: 'beforeend', fallbackId: 'api-keys' },
             { path: `${basePath}section-gems.html`, container: '#content-container', position: 'beforeend', fallbackId: 'gems' },
             { path: `${basePath}section-settings.html`, container: '#content-container', position: 'beforeend', fallbackId: 'settings' },

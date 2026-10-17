@@ -1,84 +1,103 @@
 /**
  * Theme switcher module
- * Supports light / dark theme switching and persists preference via safeStorage.
+ * Supports 4 modern developer-grade themes:
+ * - vercel-dark
+ * - vercel-light
+ * - supabase-dark
+ * - supabase-light
  */
 
 import { safeStorage } from './services/storageService.js';
 import { APP_CONSTANTS } from './config/constants.js';
 
-// Theme constants
+export const THEMES = [
+    { id: 'vercel-dark', name: 'Vercel Dark', icon: 'fas fa-moon', metaColor: '#000000', hint: 'Monochrome Dark' },
+    { id: 'vercel-light', name: 'Vercel Light', icon: 'fas fa-sun', metaColor: '#ffffff', hint: 'Monochrome Light' },
+    { id: 'supabase-dark', name: 'Supabase Dark', icon: 'fas fa-bolt', metaColor: '#1c1c1c', hint: 'Emerald Dark' },
+    { id: 'supabase-light', name: 'Supabase Light', icon: 'fas fa-leaf', metaColor: '#ffffff', hint: 'Emerald Light' }
+];
+
 const THEME_KEY = APP_CONSTANTS.STORAGE_KEYS.THEME;
-const THEME_LIGHT = 'light';
-const THEME_DARK = 'dark';
+export const THEME_LIGHT = 'vercel-light';
+export const THEME_DARK = 'vercel-dark';
 
-/**
- * Get current theme
- * @returns {string} Current theme ('light' or 'dark')
- */
-function getCurrentTheme() {
-    const savedTheme = safeStorage.getItem(THEME_KEY);
-    if (savedTheme) {
-        return savedTheme;
-    }
-
-    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-        return THEME_DARK;
-    }
-
-    return THEME_LIGHT;
+function normalizeTheme(theme) {
+    if (theme === 'dark') return 'vercel-dark';
+    if (theme === 'light') return 'vercel-light';
+    if (THEMES.some(t => t.id === theme)) return theme;
+    return 'vercel-dark';
 }
 
-/**
- * Set theme
- * @param {string} theme - Theme name ('light' or 'dark')
- */
-function setTheme(theme) {
+export function getCurrentTheme() {
+    const saved = safeStorage.getItem(THEME_KEY);
+    if (saved) {
+        return normalizeTheme(saved);
+    }
+    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        return 'vercel-dark';
+    }
+    return 'vercel-light';
+}
+
+export function setTheme(themeId) {
+    const normalized = normalizeTheme(themeId);
     const root = document.documentElement;
 
-    if (theme === THEME_DARK) {
-        root.setAttribute('data-theme', THEME_DARK);
-    } else {
-        root.removeAttribute('data-theme');
-    }
+    root.setAttribute('data-theme', normalized);
+    safeStorage.setItem(THEME_KEY, normalized);
 
-    safeStorage.setItem(THEME_KEY, theme);
-    updateMetaThemeColor(theme);
-    window.dispatchEvent(new CustomEvent('themechange', { detail: { theme } }));
+    const themeConfig = THEMES.find(t => t.id === normalized) || THEMES[0];
+    updateMetaThemeColor(themeConfig.metaColor);
+    updateThemeButtonUI(normalized);
+
+    window.dispatchEvent(new CustomEvent('themechange', { detail: { theme: normalized } }));
 }
 
-/**
- * Toggle theme
- * @returns {string} Switched theme
- */
-function toggleTheme() {
-    const currentTheme = getCurrentTheme();
-    const newTheme = currentTheme === THEME_DARK ? THEME_LIGHT : THEME_DARK;
-    setTheme(newTheme);
-    return newTheme;
-}
-
-/**
- * Update meta theme-color
- * @param {string} theme - Theme name
- */
-function updateMetaThemeColor(theme) {
+function updateMetaThemeColor(color) {
     const metaThemeColor = document.querySelector('meta[name="theme-color"]');
     if (metaThemeColor) {
-        metaThemeColor.setAttribute('content', theme === THEME_DARK ? '#1f2937' : '#4285f4');
+        metaThemeColor.setAttribute('content', color);
     }
 }
 
-/**
- * Initialize theme switcher
- * @param {string} [toggleButtonId='themeToggleBtn'] - Toggle button ID
- */
-function initThemeSwitcher(toggleButtonId = 'themeToggleBtn') {
-    const savedTheme = getCurrentTheme();
-    setTheme(savedTheme);
+function updateThemeButtonUI(currentThemeId) {
+    const btn = document.getElementById('themeToggleBtn');
+    if (!btn) return;
+
+    const currentIdx = THEMES.findIndex(t => t.id === currentThemeId);
+    const nextTheme = THEMES[(currentIdx + 1) % THEMES.length];
+    const curr = THEMES[currentIdx] || THEMES[0];
+
+    btn.title = `Theme: ${curr.name} (Click for ${nextTheme.name})`;
+    btn.setAttribute('aria-label', `Current theme: ${curr.name}`);
+
+    // Update icon dynamically
+    let iconEl = btn.querySelector('i.theme-icon-indicator');
+    if (!iconEl) {
+        btn.innerHTML = `<i class="theme-icon-indicator ${curr.icon}"></i><span class="theme-name-badge">${curr.name.split(' ')[0]}</span>`;
+    } else {
+        iconEl.className = `theme-icon-indicator ${curr.icon}`;
+        const badge = btn.querySelector('.theme-name-badge');
+        if (badge) badge.textContent = curr.name.split(' ')[0];
+    }
+}
+
+export function toggleTheme() {
+    const current = getCurrentTheme();
+    const idx = THEMES.findIndex(t => t.id === current);
+    const next = THEMES[(idx + 1) % THEMES.length];
+    setTheme(next.id);
+    return next.id;
+}
+
+export function initThemeSwitcher(toggleButtonId = 'themeToggleBtn') {
+    const active = getCurrentTheme();
+    setTheme(active);
 
     const toggleBtn = document.getElementById(toggleButtonId);
     if (toggleBtn) {
-        toggleBtn.addEventListener('click', () => {
+        toggleBtn.addEventListener('click', (e) => {
+            e.preventDefault();
             toggleTheme();
         });
     }
@@ -86,29 +105,15 @@ function initThemeSwitcher(toggleButtonId = 'themeToggleBtn') {
     if (window.matchMedia) {
         const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
         mediaQuery.addEventListener('change', (e) => {
-            const savedTheme = safeStorage.getItem(THEME_KEY);
-            if (!savedTheme) {
-                setTheme(e.matches ? THEME_DARK : THEME_LIGHT);
+            const saved = safeStorage.getItem(THEME_KEY);
+            if (!saved) {
+                setTheme(e.matches ? 'vercel-dark' : 'vercel-light');
             }
         });
     }
 }
 
-/**
- * Check if dark theme is active
- * @returns {boolean}
- */
-function isDarkMode() {
-    return getCurrentTheme() === THEME_DARK;
+export function isDarkMode() {
+    const t = getCurrentTheme();
+    return t.includes('dark');
 }
-
-export {
-    THEME_KEY,
-    THEME_LIGHT,
-    THEME_DARK,
-    getCurrentTheme,
-    setTheme,
-    toggleTheme,
-    initThemeSwitcher,
-    isDarkMode
-};

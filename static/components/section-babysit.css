@@ -1,0 +1,328 @@
+/* Babysit Monitor Section Styles */
+
+.babysit-hero-card {
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-xl);
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 1.5rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 1rem;
+    box-shadow: var(--shadow-sm);
+}
+
+.babysit-hero-title-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.babysit-hero-title-row h3 {
+    margin: 0;
+    font-size: 1.25rem;
+    color: var(--text-primary);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.babysit-status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.25rem 0.65rem;
+    border-radius: var(--radius-full);
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+
+.babysit-status-badge.status-running {
+    background: rgba(16, 185, 129, 0.15);
+    color: #10b981;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.babysit-status-badge.status-running i {
+    animation: headerPulse 1.8s infinite;
+}
+
+.babysit-status-badge.status-stopped {
+    background: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.babysit-status-badge.status-completed {
+    background: rgba(59, 130, 246, 0.15);
+    color: #3b82f6;
+    border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+.code-inline {
+    background: var(--bg-tertiary);
+    color: var(--primary-color);
+    padding: 0.15rem 0.35rem;
+    border-radius: var(--radius-sm);
+    font-size: 0.8125rem;
+    font-family: monospace;
+}
+
+#babysit-run-select {
+    padding: 0.35rem 0.75rem;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    font-size: 0.875rem;
+    cursor: pointer;
+}
+
+/* Workspace */
+.babysit-workspace {
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-xl);
+    overflow: hidden;
+    box-shadow: var(--shadow-sm);
+}
+
+.babysit-tabs {
+    display: flex;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+    padding: 0 1.25rem;
+    gap: 0.5rem;
+    overflow-x: auto;
+}
+
+.babysit-tab-btn {
+    padding: 0.85rem 1rem;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: var(--transition);
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    white-space: nowrap;
+}
+
+.babysit-tab-btn:hover {
+    color: var(--text-primary);
+}
+
+.babysit-tab-btn.active {
+    color: var(--primary-color);
+    border-bottom-color: var(--primary-color);
+}
+
+[data-theme="supabase-dark"] .babysit-tab-btn.active,
+[data-theme="supabase-light"] .babysit-tab-btn.active {
+    color: #3ecf8e;
+    border-bottom-color: #3ecf8e;
+}
+
+.babysit-panel {
+    display: none;
+    padding: 1.25rem 1.5rem;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.babysit-panel.active {
+    display: flex;
+}
+
+.babysit-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.babysit-panel-header h4 {
+    margin: 0;
+    font-size: 0.95rem;
+    color: var(--text-primary);
+}
+
+/* Empty State */
+.babysit-empty-state {
+    padding: 3rem 1rem;
+    text-align: center;
+    color: var(--text-tertiary);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.babysit-empty-state i {
+    font-size: 2.25rem;
+    opacity: 0.6;
+}
+
+/* Tasks Feed */
+.babysit-task-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+}
+
+.babysit-task-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 1rem 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+    transition: var(--transition);
+}
+
+.babysit-task-card:hover {
+    border-color: var(--primary-color);
+}
+
+.babysit-task-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.babysit-task-id {
+    font-family: monospace;
+    font-weight: 700;
+    font-size: 0.875rem;
+    color: var(--text-primary);
+}
+
+.babysit-task-desc {
+    font-size: 0.875rem;
+    color: var(--text-primary);
+    line-height: 1.4;
+}
+
+.babysit-task-meta {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+/* Trace Logs */
+.babysit-trace-log {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    max-height: 540px;
+    overflow-y: auto;
+}
+
+.babysit-trace-item {
+    background: var(--code-bg, #0d1117);
+    color: var(--code-text, #e6edf3);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 0.85rem 1rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.8125rem;
+    line-height: 1.5;
+}
+
+.babysit-trace-item-header {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 0.4rem;
+    color: var(--text-tertiary);
+    font-size: 0.75rem;
+}
+
+.babysit-trace-tool-badge {
+    background: rgba(0, 112, 243, 0.2);
+    color: #0070f3;
+    padding: 0.15rem 0.45rem;
+    border-radius: var(--radius-sm);
+}
+
+[data-theme="supabase-dark"] .babysit-trace-tool-badge,
+[data-theme="supabase-light"] .babysit-trace-tool-badge {
+    background: rgba(62, 207, 142, 0.2);
+    color: #3ecf8e;
+}
+
+/* Findings Feed */
+.babysit-findings-feed {
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+}
+
+.babysit-finding-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-left: 4px solid var(--info-color, #3b82f6);
+    border-radius: var(--radius-md);
+    padding: 1rem 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.babysit-finding-card.severity-CRITICAL {
+    border-left-color: #ef4444;
+}
+
+.babysit-finding-card.severity-HIGH {
+    border-left-color: #f59e0b;
+}
+
+.babysit-finding-card.severity-MEDIUM {
+    border-left-color: #3b82f6;
+}
+
+.babysit-finding-card.severity-LOW,
+.babysit-finding-card.severity-INFO {
+    border-left-color: #10b981;
+}
+
+.babysit-finding-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.babysit-finding-title {
+    font-weight: 600;
+    font-size: 0.9375rem;
+    color: var(--text-primary);
+}
+
+.babysit-finding-desc {
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+    line-height: 1.4;
+}
+
+.babysit-finding-rec {
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    padding: 0.5rem 0.75rem;
+    font-size: 0.75rem;
+    color: var(--text-primary);
+    margin-top: 0.25rem;
+}
