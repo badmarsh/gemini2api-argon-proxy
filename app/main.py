@@ -395,7 +395,7 @@ def _debug_error_class(request: Request, status: int, raw: bytes = b"") -> str:
         return "protocol_drift"
     if status >= 500:
         return "upstream_error"
-    if raw and b'"error"' in raw:
+    if raw and (b'"error": {' in raw or b'"error":{' in raw or b'"type": "response.failed"' in raw or b'"type":"response.failed"' in raw):
         return "upstream_error"
     return ""
 

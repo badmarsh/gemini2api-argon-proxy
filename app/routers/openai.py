@@ -688,6 +688,9 @@ async def _stream_response(prompt: str, model: str, has_tools: bool, gemini_conv
             request.state.debug_error_class = "protocol_drift"
         elif _is_google_soft_error(e) and request is not None:
             request.state.debug_error_class = "google_web_soft_error"
+        else:
+            if request is not None and not getattr(request.state, "debug_error_class", ""):
+                request.state.debug_error_class = "upstream_stream_drop"
         # Reached only when the Argon->Flash helper also gave up (or Argon content had already streamed):
         # the fallback itself is fully handled inside app/core/argon_fallback.py.
         # 流式失败：会话ID 过期等场景，用完整 prompt 非流式重试一次

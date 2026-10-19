@@ -321,6 +321,8 @@ async def _stream_gemini_response(request, prompt, model, has_tools, attachments
                     yield enc.failed(_safe_response_stream_error(e2))
                     return
             else:
+                if request is not None and not getattr(request.state, "debug_error_class", ""):
+                    request.state.debug_error_class = "upstream_stream_drop"
                 yield enc.failed(_safe_response_stream_error(e))
                 return
         text = result.get("text", "")
@@ -592,6 +594,8 @@ async def _stream_gemini_response(request, prompt, model, has_tools, attachments
                         streamed_any = True
                     source_complete = True
             else:
+                if request is not None and not getattr(request.state, "debug_error_class", ""):
+                    request.state.debug_error_class = "upstream_stream_drop"
                 yield enc.failed(_safe_response_stream_error(e))
                 return
     finally:

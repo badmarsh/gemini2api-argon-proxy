@@ -28,6 +28,9 @@ class AgentSandbox:
     def __init__(self, sandbox_dir: Path | str):
         self.root = Path(sandbox_dir).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
+        # Pre-create standard workspace directories expected by benchmarks & scripts
+        for subdir in ("output", "tmp", "data", "config"):
+            (self.root / subdir).mkdir(parents=True, exist_ok=True)
 
     def _resolve_safe(self, rel_or_abs_path: str) -> Path:
         """Resolve a path and ensure it remains strictly inside the sandbox root."""

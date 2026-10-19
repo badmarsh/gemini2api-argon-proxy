@@ -94,6 +94,12 @@ GOOGLE_WEB_ERROR_PHRASES = (
     "I can't use Google Workspace",
     "I can't use the Workspace app",
     "Turn on these settings to continue",
+    "I do not have access to a local command shell",
+    "I do not have access to a local",
+    "I cannot access or analyze the local",
+    "I cannot access or analyze the local file",
+    "I cannot directly access or manipulate local",
+    "I cannot directly access or manipulate local files",
 )
 GOOGLE_WEB_ERROR_PREFIX_BUFFER_LENGTH = max(map(len, GOOGLE_WEB_ERROR_PHRASES))
 

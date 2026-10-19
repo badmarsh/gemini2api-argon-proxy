@@ -125,3 +125,30 @@ def test_responses_buffered_google_error_exception_regenerates_without_leaking(g
     assert "response.completed" in body
     assert _RECOVERED in body
     assert _PHRASE not in body
+
+
+def test_openai_true_stream_suppresses_local_filesystem_refusal_phrase_and_regenerates(gem_client, monkeypatch):
+    """Verify local filesystem refusal phrases are suppressed by InitialPrefixBuffer and regenerated."""
+    import app.routers.openai as oai
+
+    refusal_phrase = "I do not have access to a local command shell, filesystem, or sandbox tools."
+
+    async def fake_refusal_stream(*args, **kwargs):
+        for start in range(0, len(refusal_phrase), 10):
+            yield {"type": "delta", "text": refusal_phrase[start:start + 10]}
+        yield {"type": "final", "text": refusal_phrase, "conversation_id": "", "images": []}
+
+    monkeypatch.setattr(oai.gemini_client, "generate_stream", fake_refusal_stream)
+    monkeypatch.setattr(oai.argon_fallback, "generate", _successful_regeneration)
+
+    with gem_client.stream("POST", "/v1/chat/completions", json={
+        "model": "gemini-flash",
+        "messages": [{"role": "user", "content": "analyze local files"}],
+        "stream": True,
+    }, headers=_AUTH) as response:
+        body = "".join(response.iter_text())
+
+    assert response.status_code == 200
+    assert _RECOVERED in body
+    assert refusal_phrase not in body
+    assert "[DONE]" in body
