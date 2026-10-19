@@ -113,6 +113,7 @@ async def create_message(req: ClaudeRequest, request: Request):
             prompt = build_prompt_from_messages(messages_raw, system=_combined)
 
     has_tools = bool(req.tools)
+    choice = None
     # 生图意图优先：带 tools 但明确生图意图时跳过工具模拟，直接生图（否则生图被压制）。
     # 只看最后一轮用户消息：整段 prompt 含 system 提示词与 tool_result 正文，
     # 拿它判断会把引用到的图片字样当成用户要图，从而静默丢掉客户端 tools 并改走真流式。
@@ -124,7 +125,6 @@ async def create_message(req: ClaudeRequest, request: Request):
             {"name": t.name, "description": t.description, "parameters": t.input_schema}
             for t in req.tools
         ]
-        choice = None
         if req.tool_choice:
             tc_type = req.tool_choice.get("type", "auto")
             if tc_type == "any":
@@ -138,7 +138,7 @@ async def create_message(req: ClaudeRequest, request: Request):
     if req.stream:
         return StreamingResponse(
             _stream_claude(prompt, resolved_model, has_tools, attachments, req.model, gem_id, gem_account_id,
-                          request=request, is_argon=is_argon, thinking=force_thinking),
+                          request=request, is_argon=is_argon, thinking=force_thinking, tool_choice=choice),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
                      **argon_fallback.stream_headers(is_argon), **_pre_headers},
@@ -176,7 +176,8 @@ async def create_message(req: ClaudeRequest, request: Request):
         text, _stall_corrected = await agent_loop.guard_tool_loop(
             text, _regenerate_for_tools, enabled=getattr(settings, "tool_loop_stall_guard", True),
             budget=regeneration_budget)
-        parsed = await parse_tool_response_with_retry(text, _regenerate_for_tools, budget=regeneration_budget)
+        parsed = await parse_tool_response_with_retry(
+            text, _regenerate_for_tools, budget=regeneration_budget, tool_choice=choice)
         if parsed["type"] == "tool_calls":
             blocks = []
             for tc in parsed["tool_calls"]:
@@ -236,14 +237,15 @@ async def count_tokens(req: ClaudeRequest):
     return {"input_tokens": count}
 
 
-async def _stream_claude(prompt: str, model: str, has_tools: bool, attachments=None, display_model: str = "", gem_id=None, account_id=None, request=None, is_argon: bool = False, thinking: bool = False) -> AsyncGenerator[str, None]:
+async def _stream_claude(prompt: str, model: str, has_tools: bool, attachments=None, display_model: str = "", gem_id=None, account_id=None, request=None, is_argon: bool = False, thinking: bool = False, tool_choice=None) -> AsyncGenerator[str, None]:
     msg_id = f"msg_{uuid.uuid4().hex[:24]}"
     model_name = display_model or model
 
     # 有工具/附件：需完整文本，走非流式收集后切片（零回归）
     if has_tools or attachments:
-        async for sse in _stream_claude_buffered(prompt, model, has_tools, attachments, msg_id, model_name, gem_id, account_id,
-                                                 request=request, is_argon=is_argon, thinking=thinking):
+        async for sse in _stream_claude_buffered(
+                prompt, model, has_tools, attachments, msg_id, model_name, gem_id, account_id,
+                request=request, is_argon=is_argon, thinking=thinking, tool_choice=tool_choice):
             yield sse
         return
 
@@ -365,7 +367,7 @@ async def _stream_claude(prompt: str, model: str, has_tools: bool, attachments=N
     yield _claude_sse({"type": "message_stop"})
 
 
-async def _stream_claude_buffered(prompt: str, model: str, has_tools: bool, attachments, msg_id: str, display_model: str = "", gem_id=None, account_id=None, request=None, is_argon: bool = False, thinking: bool = False) -> AsyncGenerator[str, None]:
+async def _stream_claude_buffered(prompt: str, model: str, has_tools: bool, attachments, msg_id: str, display_model: str = "", gem_id=None, account_id=None, request=None, is_argon: bool = False, thinking: bool = False, tool_choice=None) -> AsyncGenerator[str, None]:
     """非流式收集 + 切片：用于有工具调用/附件的场景。"""
     model_name = display_model or model
     gen_task = asyncio.create_task(argon_fallback.generate(gemini_client, prompt, model, attachments,
@@ -442,7 +444,7 @@ async def _stream_claude_buffered(prompt: str, model: str, has_tools: bool, atta
         # 这条流早就开了，裸 await 会在已开的连接上制造一次远超单个 keepalive 间隔的
         # 死寂（issue #10 followup F2）。用与上面 gen_task 相同的 task + keepalive 套路续心跳。
         parse_task = asyncio.create_task(parse_tool_response_with_retry(
-            text, _regenerate_for_tools, budget=regeneration_budget))
+            text, _regenerate_for_tools, budget=regeneration_budget, tool_choice=tool_choice))
         try:
             async for ping in sse_keepalive_during(parse_task):
                 yield ping

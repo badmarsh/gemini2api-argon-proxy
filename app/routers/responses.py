@@ -11,7 +11,8 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from app.config import settings
 from app.core.account_pool import account_pool as gemini_client
 from app.core.gemini_client import (
-    GEMINI_MODELS, _resolve_model, GOOGLE_WEB_ERROR_PHRASES, MODEL_ALIASES, classify_error, ProtocolDriftError,
+    GEMINI_MODELS, _resolve_model, GOOGLE_WEB_ERROR_PHRASES, match_google_web_error_prefix,
+    MODEL_ALIASES, classify_error, ProtocolDriftError, GoogleWebError,
 )
 from app.core.fallback import is_empty_result, is_blank_answer, EMPTY_RESPONSE_MESSAGE
 from app.core import agent_loop, argon_fallback
@@ -19,7 +20,10 @@ from app.core.regeneration_budget import RegenerationBudget
 from app.core.responses_protocol import (
     parse_responses_input, build_responses_object, new_response_id, ResponsesStreamEncoder,
 )
-from app.core.stream import iter_with_keepalive, SSE_KEEPALIVE_FRAME, sse_keepalive_during, split_into_chunks
+from app.core.stream import (
+    InitialPrefixBuffer, iter_with_keepalive, SSE_KEEPALIVE_FRAME, sse_keepalive_during,
+    split_into_chunks,
+)
 from app.routers.openai import _images_to_markdown
 from app.utils.tools import build_tool_prompt, parse_tool_response_with_retry, estimate_tokens
 from app.utils.prompt import build_prompt_from_messages, extract_attachments
@@ -33,6 +37,15 @@ def _error(status: int, message: str, error_type: str = "invalid_request_error",
     return JSONResponse(status_code=status, content={
         "error": {"message": message, "type": error_type, "param": param, "code": None},
     })
+
+
+def _safe_response_stream_error(exc: Exception) -> str:
+    """Keep a Google web refusal out of the streamed error envelope as well as the text delta."""
+    if not isinstance(exc, ProtocolDriftError) and (
+            isinstance(exc, GoogleWebError) or "google web error" in str(exc).lower()
+            or match_google_web_error_prefix(str(exc))):
+        return "Google web soft-error detected; regeneration/fallback failed"
+    return str(exc)
 
 
 def _request_params(body: dict) -> dict:
@@ -53,7 +66,8 @@ def _normalize_tool_choice_for_prompt(tool_choice):
     return tool_choice
 
 
-async def _build_output_items(text: str, has_tools: bool, regenerate=None, budget=None) -> tuple[list[dict], str]:
+async def _build_output_items(text: str, has_tools: bool, regenerate=None, budget=None,
+                              tool_choice=None) -> tuple[list[dict], str]:
     """把模型原始回复文本组装成 Responses output 数组。返回 (output_items, 剩余文本估算用)。
 
     ``regenerate`` 为可选的「重新取一次模型文本」闭包：工具调用 JSON 畸形时用它重试
@@ -61,7 +75,8 @@ async def _build_output_items(text: str, has_tools: bool, regenerate=None, budge
     """
     output = []
     if has_tools:
-        parsed = await parse_tool_response_with_retry(text, regenerate, budget=budget)
+        parsed = await parse_tool_response_with_retry(
+            text, regenerate, budget=budget, tool_choice=tool_choice)
         if parsed["type"] == "tool_calls":
             for tc in parsed["tool_calls"]:
                 output.append({
@@ -154,7 +169,7 @@ async def create_response(request: Request):
         return StreamingResponse(
             _stream_gemini_response(request, prompt, resolved_model, has_tools, attachments,
                                     gem_id, gem_account_id, request_params, extended_thinking,
-                                    is_argon=is_argon),
+                                    is_argon=is_argon, tool_choice=tool_choice),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
@@ -172,13 +187,13 @@ async def create_response(request: Request):
                                                       gem_id=gem_id, account_id=gem_account_id,
                                                       extended_thinking=False)
             except Exception as e2:
-                return _error(502, str(e2), error_type="api_error")
+                return _error(502, _safe_response_stream_error(e2), error_type="api_error")
         else:
-            return _error(502, str(e), error_type="api_error")
+            return _error(502, _safe_response_stream_error(e), error_type="api_error")
 
     text = result.get("text", "")
     res_text = (text or "").strip()
-    is_err_text = bool(res_text and any(res_text.startswith(err) for err in GOOGLE_WEB_ERROR_PHRASES))
+    is_err_text = bool(match_google_web_error_prefix(res_text))
     # Every fallback option is exhausted (argon_fallback above, or ARGON_FALLBACK_TO_FLASH=false): answer with a
     # retryable error instead of an HTTP 200 with empty content.
     if is_blank_answer(result):
@@ -186,8 +201,9 @@ async def create_response(request: Request):
     # Google's soft-error phrase ("Sorry, something went wrong...") is a failure, not an assistant reply. Fallback
     # (above) already had its chance; report it the way chat/completions does so a client can retry.
     if is_err_text:
-        status, err_type, retry_after = classify_error(RuntimeError(res_text))
-        resp = _error(status, res_text, error_type=err_type)
+        status, err_type, retry_after = classify_error(GoogleWebError(
+            "Google web soft-error detected; regeneration/fallback failed"))
+        resp = _error(status, "Google web soft-error detected; regeneration/fallback failed", error_type=err_type)
         if retry_after:
             resp.headers["Retry-After"] = str(retry_after)
         return resp
@@ -212,7 +228,8 @@ async def create_response(request: Request):
         text, _stall_corrected = await agent_loop.guard_tool_loop(
             text, _regenerate_for_tools, enabled=getattr(settings, "tool_loop_stall_guard", True),
             budget=regeneration_budget)
-    output, _ = await _build_output_items(text, has_tools, _regenerate_for_tools, regeneration_budget)
+    output, _ = await _build_output_items(
+        text, has_tools, _regenerate_for_tools, regeneration_budget, tool_choice=tool_choice)
     thoughts = result.get("thoughts") or ""
     if thoughts:
         output = [{"type": "reasoning", "id": new_response_id().replace("resp_", "rs_"),
@@ -226,7 +243,7 @@ async def create_response(request: Request):
 
 async def _stream_gemini_response(request, prompt, model, has_tools, attachments, gem_id,
                                   gem_account_id, request_params, extended_thinking=False,
-                                  is_argon=False):
+                                  is_argon=False, tool_choice=None):
     response_id = new_response_id()
     enc = ResponsesStreamEncoder(response_id, model, request_params)
     yield enc.created()
@@ -249,13 +266,38 @@ async def _stream_gemini_response(request, prompt, model, has_tools, attachments
         try:
             result = gen_task.result()
         except Exception as e:
-            if isinstance(e, ProtocolDriftError) or "protocol drift" in str(e).lower():
+            if (isinstance(e, ProtocolDriftError) or "protocol drift" in str(e).lower()) and request is not None:
                 request.state.debug_error_class = "protocol_drift"
-            if is_argon and getattr(settings, "argon_fallback_to_flash", True):
+            is_google_soft_error = (
+                not isinstance(e, ProtocolDriftError)
+                and (isinstance(e, GoogleWebError) or "google web error" in str(e).lower())
+            )
+            if is_google_soft_error:
+                if request is not None:
+                    request.state.debug_error_class = "google_web_soft_error"
+                logger.warning("Buffered Google web soft-error detected; attempting regeneration")
+                retry_task = asyncio.create_task(argon_fallback.generate(
+                    gemini_client, prompt, model, attachments,
+                    is_argon=is_argon, thinking=extended_thinking,
+                    gem_id=gem_id, account_id=gem_account_id))
+                try:
+                    try:
+                        async for ping in sse_keepalive_during(retry_task):
+                            yield ping
+                    except BaseException:
+                        retry_task.cancel()
+                        if retry_task.done() and not retry_task.cancelled():
+                            retry_task.exception()
+                        raise
+                    result = retry_task.result()
+                except Exception as e_soft:
+                    yield enc.failed(_safe_response_stream_error(e_soft))
+                    return
+            elif is_argon and getattr(settings, "argon_fallback_to_flash", True):
                 logger.warning(f"Argon stream(buffered) failed ({e}), falling back to {settings.argon_fallback_model}")
-                fb_task = asyncio.create_task(gemini_client.generate(prompt, settings.argon_fallback_model, "", attachments,
-                                                                     gem_id=gem_id, account_id=gem_account_id,
-                                                                     extended_thinking=True))
+                fb_task = asyncio.create_task(gemini_client.generate(
+                    prompt, settings.argon_fallback_model, "", attachments,
+                    gem_id=gem_id, account_id=gem_account_id, extended_thinking=True))
                 try:
                     async for ping in sse_keepalive_during(fb_task):
                         yield ping
@@ -267,7 +309,7 @@ async def _stream_gemini_response(request, prompt, model, has_tools, attachments
                 try:
                     result = fb_task.result()
                 except Exception as e_fb:
-                    yield enc.failed(str(e_fb))
+                    yield enc.failed(_safe_response_stream_error(e_fb))
                     return
             elif extended_thinking:
                 logger.warning(f"extended-thinking stream(buffered) failed, retrying normal: {e}")
@@ -276,19 +318,44 @@ async def _stream_gemini_response(request, prompt, model, has_tools, attachments
                                                           gem_id=gem_id, account_id=gem_account_id,
                                                           extended_thinking=False)
                 except Exception as e2:
-                    yield enc.failed(str(e2))
+                    yield enc.failed(_safe_response_stream_error(e2))
                     return
             else:
-                yield enc.failed(str(e))
+                yield enc.failed(_safe_response_stream_error(e))
                 return
         text = result.get("text", "")
         res_text = (text or "").strip()
-        is_err_text = bool(res_text and any(res_text.startswith(err) for err in GOOGLE_WEB_ERROR_PHRASES))
+        is_err_text = bool(match_google_web_error_prefix(res_text))
+        if is_err_text:
+            if request is not None:
+                request.state.debug_error_class = "google_web_soft_error"
+            logger.warning("Buffered Google web soft-error suppressed before Responses SSE emission; regenerating")
+            retry_task = asyncio.create_task(argon_fallback.generate(
+                gemini_client, prompt, model, attachments,
+                is_argon=is_argon, thinking=extended_thinking,
+                gem_id=gem_id, account_id=gem_account_id))
+            try:
+                try:
+                    async for ping in sse_keepalive_during(retry_task):
+                        yield ping
+                except BaseException:
+                    retry_task.cancel()
+                    if retry_task.done() and not retry_task.cancelled():
+                        retry_task.exception()
+                    raise
+                retry_result = retry_task.result()
+                retry_text = (retry_result.get("text") or "").strip()
+                if not match_google_web_error_prefix(retry_text) and not is_blank_answer(retry_result):
+                    result = retry_result
+                    text = result.get("text", "") or ""
+                    is_err_text = False
+            except Exception as e_soft:
+                logger.warning("Buffered Responses soft-error regeneration failed: %s", type(e_soft).__name__)
         if is_blank_answer(result):
             yield enc.failed(EMPTY_RESPONSE_MESSAGE)
             return
         if is_err_text:
-            yield enc.failed(res_text)
+            yield enc.failed("Google web soft-error detected; regeneration/fallback failed")
             return
         thoughts = result.get("thoughts") or ""
         gen_images = result.get("images") or []
@@ -326,7 +393,8 @@ async def _stream_gemini_response(request, prompt, model, has_tools, attachments
         # in_progress/keepalive 已发），裸 await 会在已开的连接上制造一次远超单个 keepalive
         # 间隔的死寂（issue #10 followup F2）。用与上面 gen_task 相同的 task + keepalive 续心跳。
         build_task = asyncio.create_task(_build_output_items(
-            text, has_tools, _regenerate_for_tools, regeneration_budget if has_tools else None))
+            text, has_tools, _regenerate_for_tools, regeneration_budget if has_tools else None,
+            tool_choice=tool_choice))
         try:
             async for ping in sse_keepalive_during(build_task):
                 yield ping
@@ -367,11 +435,15 @@ async def _stream_gemini_response(request, prompt, model, has_tools, attachments
     final_images = []
     thoughts = ""
     streamed_any = False
+    error_prefix_buffer = InitialPrefixBuffer(GOOGLE_WEB_ERROR_PHRASES)
+    soft_error_prefix = None
+    source_complete = False
+    stream_events = iter_with_keepalive(
+        gemini_client.generate_stream(prompt, model, "", attachments,
+                                      gem_id=gem_id, account_id=gem_account_id,
+                                      extended_thinking=extended_thinking))
     try:
-        async for _kind, evt in iter_with_keepalive(
-            gemini_client.generate_stream(prompt, model, "", attachments,
-                                          gem_id=gem_id, account_id=gem_account_id,
-                                          extended_thinking=extended_thinking)):
+        async for _kind, evt in stream_events:
             if _kind == "ping":
                 yield SSE_KEEPALIVE_FRAME
                 continue
@@ -382,85 +454,207 @@ async def _stream_gemini_response(request, prompt, model, has_tools, attachments
             elif evt.get("type") == "delta":
                 delta = evt.get("text", "")
                 if delta:
-                    streamed_any = True
                     full_text += delta
-                    yield enc.text_delta(msg_id, 0, delta)
+                    safe_delta, matched = error_prefix_buffer.feed(delta)
+                    if matched:
+                        soft_error_prefix = matched
+                        logger.warning("Google web soft-error prefix suppressed before Responses SSE emission: %r", matched)
+                        break
+                    if safe_delta:
+                        streamed_any = True
+                        yield enc.text_delta(msg_id, 0, safe_delta)
             elif evt.get("type") == "final":
                 final_text = evt.get("text", full_text)
+                matched = error_prefix_buffer.match(final_text)
+                if matched:
+                    soft_error_prefix = matched
+                    full_text = final_text
+                    logger.warning("Google web soft-error prefix suppressed before Responses SSE emission: %r", matched)
+                    break
                 if final_text.startswith(full_text) and len(final_text) > len(full_text):
                     tail = final_text[len(full_text):]
-                    if tail:
-                        yield enc.text_delta(msg_id, 0, tail)
-                full_text = final_text
+                    safe_tail, matched = error_prefix_buffer.feed(tail)
+                    full_text = final_text
+                    if matched:
+                        soft_error_prefix = matched
+                        logger.warning("Google web soft-error prefix suppressed before Responses SSE emission: %r", matched)
+                        break
+                    if safe_tail:
+                        streamed_any = True
+                        yield enc.text_delta(msg_id, 0, safe_tail)
+                else:
+                    full_text = final_text
                 final_images = evt.get("images") or []
                 thoughts = evt.get("thoughts") or thoughts
+        source_complete = True
         # An Argon stream that ends with no answer at all (empty reply, sign-in page, malformed or truncated
         # frames) raises nothing, so it used to skip the Flash fallback and finish as an empty completion.
         if (is_argon and getattr(settings, "argon_fallback_to_flash", True)
                 and not streamed_any and not (full_text or "").strip() and not final_images):
             raise RuntimeError("Argon stream ended without any answer")
     except Exception as e:
-        if isinstance(e, ProtocolDriftError) or "protocol drift" in str(e).lower():
-            request.state.debug_error_class = "protocol_drift"
-        if is_argon and getattr(settings, "argon_fallback_to_flash", True) and not streamed_any:
-            logger.warning(f"Argon stream failed before first chunk ({e}), falling back to {settings.argon_fallback_model}")
-            try:
-                async for _kind, evt in iter_with_keepalive(
+        is_google_soft_error = isinstance(e, GoogleWebError) or "google web error" in str(e).lower()
+        if is_google_soft_error:
+            soft_error_prefix = match_google_web_error_prefix(full_text) or "upstream Google web error"
+            if request is not None:
+                request.state.debug_error_class = "google_web_soft_error"
+            logger.warning("Google web soft-error detected before Responses SSE emission; attempting regeneration")
+        else:
+            if (isinstance(e, ProtocolDriftError) or "protocol drift" in str(e).lower()) and request is not None:
+                request.state.debug_error_class = "protocol_drift"
+            if is_argon and getattr(settings, "argon_fallback_to_flash", True) and not streamed_any:
+                logger.warning(f"Argon stream failed before first chunk ({e}), falling back to {settings.argon_fallback_model}")
+                error_prefix_buffer = InitialPrefixBuffer(GOOGLE_WEB_ERROR_PHRASES)
+                fallback_events = iter_with_keepalive(
                     gemini_client.generate_stream(prompt, settings.argon_fallback_model, "", attachments,
                                                   gem_id=gem_id, account_id=gem_account_id,
-                                                  extended_thinking=True)):
-                    if _kind == "ping":
-                        yield SSE_KEEPALIVE_FRAME
-                        continue
-                    if evt.get("type") == "thoughts":
-                        t_delta = evt.get("text", "")
-                        if t_delta:
-                            thoughts += t_delta
-                    elif evt.get("type") == "delta":
-                        delta = evt.get("text", "")
-                        if delta:
-                            streamed_any = True
-                            full_text += delta
-                            yield enc.text_delta(msg_id, 0, delta)
-                    elif evt.get("type") == "final":
-                        final_text = evt.get("text", full_text)
-                        if final_text.startswith(full_text) and len(final_text) > len(full_text):
-                            tail = final_text[len(full_text):]
-                            if tail:
-                                yield enc.text_delta(msg_id, 0, tail)
-                        full_text = final_text
-                        final_images = evt.get("images") or []
-                        thoughts = evt.get("thoughts") or thoughts
-            except Exception as e_fb:
-                yield enc.failed(str(e_fb))
+                                                  extended_thinking=True))
+                try:
+                    async for _kind, evt in fallback_events:
+                        if _kind == "ping":
+                            yield SSE_KEEPALIVE_FRAME
+                            continue
+                        if evt.get("type") == "thoughts":
+                            t_delta = evt.get("text", "")
+                            if t_delta:
+                                thoughts += t_delta
+                        elif evt.get("type") == "delta":
+                            delta = evt.get("text", "")
+                            if delta:
+                                full_text += delta
+                                safe_delta, matched = error_prefix_buffer.feed(delta)
+                                if matched:
+                                    soft_error_prefix = matched
+                                    logger.warning("Google web soft-error prefix suppressed in Flash fallback stream: %r", matched)
+                                    break
+                                if safe_delta:
+                                    streamed_any = True
+                                    yield enc.text_delta(msg_id, 0, safe_delta)
+                        elif evt.get("type") == "final":
+                            final_text = evt.get("text", full_text)
+                            matched = error_prefix_buffer.match(final_text)
+                            if matched:
+                                soft_error_prefix = matched
+                                full_text = final_text
+                                break
+                            if final_text.startswith(full_text) and len(final_text) > len(full_text):
+                                tail = final_text[len(full_text):]
+                                safe_tail, matched = error_prefix_buffer.feed(tail)
+                                full_text = final_text
+                                if matched:
+                                    soft_error_prefix = matched
+                                    break
+                                if safe_tail:
+                                    streamed_any = True
+                                    yield enc.text_delta(msg_id, 0, safe_tail)
+                            else:
+                                full_text = final_text
+                            final_images = evt.get("images") or []
+                            thoughts = evt.get("thoughts") or thoughts
+                    source_complete = True
+                except Exception as e_fb:
+                    if isinstance(e_fb, GoogleWebError) or "google web error" in str(e_fb).lower():
+                        soft_error_prefix = match_google_web_error_prefix(full_text) or "upstream Google web error"
+                        if request is not None:
+                            request.state.debug_error_class = "google_web_soft_error"
+                    else:
+                        yield enc.failed(_safe_response_stream_error(e_fb))
+                        return
+                finally:
+                    await fallback_events.aclose()
+            # Extended-thinking failure: retry non-thinking once, but gate its text before emitting it.
+            elif extended_thinking and not streamed_any:
+                logger.warning(f"extended-thinking stream failed, retrying normal: {e}")
+                error_prefix_buffer = InitialPrefixBuffer(GOOGLE_WEB_ERROR_PHRASES)
+                try:
+                    result = await gemini_client.generate(prompt, model, "", attachments,
+                                                          gem_id=gem_id, account_id=gem_account_id,
+                                                          extended_thinking=False)
+                except Exception as e2:
+                    if isinstance(e2, GoogleWebError) or "google web error" in str(e2).lower():
+                        soft_error_prefix = "upstream Google web error"
+                        if request is not None:
+                            request.state.debug_error_class = "google_web_soft_error"
+                    else:
+                        yield enc.failed(_safe_response_stream_error(e2))
+                        return
+                else:
+                    full_text = result.get("text", "") or ""
+                    final_images = result.get("images") or []
+                    thoughts = result.get("thoughts") or thoughts
+                    matched = match_google_web_error_prefix(full_text)
+                    if matched:
+                        soft_error_prefix = matched
+                        if request is not None:
+                            request.state.debug_error_class = "google_web_soft_error"
+                    elif full_text:
+                        yield enc.text_delta(msg_id, 0, full_text)
+                        streamed_any = True
+                    source_complete = True
+            else:
+                yield enc.failed(_safe_response_stream_error(e))
                 return
-        # 扩展思维链路径失败且尚未流出任何内容：退回非流式非思维链重试一次
-        elif extended_thinking and not streamed_any:
-            logger.warning(f"extended-thinking stream failed, retrying normal: {e}")
+    finally:
+        await stream_events.aclose()
+
+    if source_complete and soft_error_prefix is None:
+        safe_tail, matched = error_prefix_buffer.finish()
+        if matched:
+            soft_error_prefix = matched
+            if request is not None:
+                request.state.debug_error_class = "google_web_soft_error"
+            logger.warning("Google web soft-error prefix suppressed at Responses stream end: %r", matched)
+        elif safe_tail:
+            streamed_any = True
+            yield enc.text_delta(msg_id, 0, safe_tail)
+
+    if soft_error_prefix:
+        if request is not None:
+            request.state.debug_error_class = "google_web_soft_error"
+        try:
+            retry_task = asyncio.create_task(argon_fallback.generate(
+                gemini_client, prompt, model, attachments,
+                is_argon=is_argon, thinking=extended_thinking,
+                gem_id=gem_id, account_id=gem_account_id))
             try:
-                result = await gemini_client.generate(prompt, model, "", attachments,
-                                                      gem_id=gem_id, account_id=gem_account_id,
-                                                      extended_thinking=False)
-            except Exception as e2:
-                yield enc.failed(str(e2))
-                return
-            full_text = result.get("text", "")
+                async for ping in sse_keepalive_during(retry_task):
+                    yield ping
+            except BaseException:
+                retry_task.cancel()
+                if retry_task.done() and not retry_task.cancelled():
+                    retry_task.exception()
+                raise
+            result = retry_task.result()
+            retry_text = result.get("text", "") or ""
+            if match_google_web_error_prefix(retry_text):
+                raise GoogleWebError("Google web soft-error prefix persisted after regeneration")
+            if is_blank_answer(result):
+                raise GoogleWebError("Google web soft-error regeneration returned an empty response")
+            marker = result.get("argon_fallback") if isinstance(result, dict) else None
+            if marker:
+                yield f": gemini2api argon_fallback served_by={marker.get('served_by')} reason={marker.get('reason')}\n\n"
+            full_text = retry_text
             final_images = result.get("images") or []
+            thoughts = result.get("thoughts") or thoughts
             if full_text:
+                streamed_any = True
                 yield enc.text_delta(msg_id, 0, full_text)
-        else:
-            yield enc.failed(str(e))
+        except Exception as e_soft:
+            logger.warning("Google web soft-error regeneration failed: %s", type(e_soft).__name__)
+            yield enc.failed("Google web soft-error detected; regeneration/fallback failed")
             return
 
     if not streamed_any and not (full_text or "").strip() and not final_images and not thoughts:
         yield enc.failed(EMPTY_RESPONSE_MESSAGE)
         return
 
-    # Deltas may already have gone out (a phrase cannot be recognised before it is complete), but the stream must
-    # still end in `response.failed`, not `response.completed`: Google's soft-error text is not an answer.
+    # Defense in depth for a final snapshot that diverges from incremental deltas: never complete a Responses
+    # stream with a recognized Google soft-error, even if an upstream implementation bypassed the prefix gate.
     _final_stripped = (full_text or "").strip()
-    if _final_stripped and any(_final_stripped.startswith(err) for err in GOOGLE_WEB_ERROR_PHRASES):
-        yield enc.failed(_final_stripped)
+    if match_google_web_error_prefix(_final_stripped):
+        if request is not None:
+            request.state.debug_error_class = "google_web_soft_error"
+        yield enc.failed("Google web soft-error detected; regeneration/fallback failed")
         return
 
     if final_images:

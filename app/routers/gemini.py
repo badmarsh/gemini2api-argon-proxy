@@ -60,6 +60,14 @@ def _parse_system(system_instruction) -> str | None:
     return None
 
 
+def _native_tool_choice(req: GeminiRequest):
+    """Map Gemini's function-calling mode to the parser's required-call contract."""
+    tool_config = req.tool_config
+    config = getattr(tool_config, "function_calling_config", None) if tool_config else None
+    mode = config.get("mode") if isinstance(config, dict) else None
+    return "required" if str(mode or "").upper() in {"ANY", "REQUIRED"} else None
+
+
 def _render_function_call_part(fc: dict) -> str:
     """渲染 functionCall part，格式与 app/utils/prompt.py 里 Anthropic tool_use 分支
     的 "[Tool call: NAME(ARGS_JSON)]" 保持一致，供四协议共用同一套模型侧契约。"""
@@ -261,8 +269,9 @@ async def generate_content(model: str, req: GeminiRequest, request: Request):
         response_text, _stall_corrected = await agent_loop.guard_tool_loop(
             response_text, _regenerate_for_tools,
             enabled=getattr(settings, "tool_loop_stall_guard", True), budget=regeneration_budget)
-        parsed = await parse_tool_response_with_retry(response_text, _regenerate_for_tools,
-                                                      budget=regeneration_budget)
+        parsed = await parse_tool_response_with_retry(
+            response_text, _regenerate_for_tools, budget=regeneration_budget,
+            tool_choice=_native_tool_choice(req))
         if isinstance(parsed, dict):
             if parsed.get("type") == "tool_calls":
                 for tc in parsed["tool_calls"]:
@@ -433,8 +442,9 @@ async def stream_generate_content(model: str, req: GeminiRequest, request: Reque
                 # 死寂（issue #10 followup F2）。同上面 gen_task 一样用 task + keepalive 续心跳；
                 # NDJSON 不能用 SSE 注释帧，沿用同款裸换行（丢弃 ping 的实际内容只借它的节奏）。
                 parse_task = asyncio.create_task(
-                    parse_tool_response_with_retry(response_text, _regenerate_for_tools,
-                                                   budget=regeneration_budget)
+                    parse_tool_response_with_retry(
+                        response_text, _regenerate_for_tools, budget=regeneration_budget,
+                        tool_choice=_native_tool_choice(req))
                 )
                 try:
                     async for _ping in sse_keepalive_during(parse_task):

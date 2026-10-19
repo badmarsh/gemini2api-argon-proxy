@@ -95,6 +95,19 @@ GOOGLE_WEB_ERROR_PHRASES = (
     "I can't use the Workspace app",
     "Turn on these settings to continue",
 )
+GOOGLE_WEB_ERROR_PREFIX_BUFFER_LENGTH = max(map(len, GOOGLE_WEB_ERROR_PHRASES))
+
+
+def match_google_web_error_prefix(text: str) -> str | None:
+    """Return the Google web error phrase at the start of ``text``, if present.
+
+    Match after leading whitespace, just like the routers' non-streaming checks. This is intentionally a
+    prefix test rather than ``_is_google_error_reply``: stream safety must suppress a known error phrase even
+    when Google appends a long explanation after it.
+    """
+    candidate = (text or "").lstrip()
+    return next((phrase for phrase in GOOGLE_WEB_ERROR_PHRASES if candidate.startswith(phrase)), None)
+
 
 # A reply is Google's error template only when it is one of those sentences on its own,
 # plus at most a short single-line tail such as an error code. A real answer that merely
@@ -253,6 +266,18 @@ GEMINI_MODELS = {
     "gemini-4-argon": {"id": "95a4c0abcba24364", "capacity": 2, "pro_only": True, "family": "argon", "model_number": 8, "thinking": True},
 }
 
+# All Gemini Web models exposed by this proxy accept image/file attachments. Keep capability metadata alongside
+# the internal model definitions so protocol model cards (including public aliases) cannot drift from routing.
+for _gemini_model_info in GEMINI_MODELS.values():
+    _gemini_model_info.update({
+        "vision": True,
+        "supports_vision": True,
+        "multimodal": True,
+        "input_modalities": ["text", "image"],
+        "output_modalities": ["text", "image"],
+        "capabilities": ["text", "vision", "multimodal"],
+    })
+
 # 对外暴露的稳定模型名（永不变，API 契约）。客户端只认这 4 个，
 # 内部按账号当前真实可用的模型动态映射，账号订阅等级/Google 灰度怎么变都不影响 API。
 PUBLIC_MODELS = [
@@ -404,6 +429,82 @@ _IMAGE_GEN_PLACEHOLDER_RE = re.compile(
 # 直接 emit 会把半截网址流给客户端。占位 URL 的完整起始模板（host 段固定）：
 _IMAGE_GEN_PLACEHOLDER_PREFIX = "http://googleusercontent.com/"
 _IMAGE_GEN_PLACEHOLDER_PREFIX_S = "https://googleusercontent.com/"
+
+# Gemini Web's native code interpreter may expose these UI-only annotations as assistant text. Strip the
+# reference marker and the complete file-tag block at the source so every protocol gets the same clean text.
+_CODE_REFERENCE_RE = re.compile(
+    r"python\?code_reference(?:&code_event_index=\d+)?", re.IGNORECASE
+)
+_FILE_TAG_RE = re.compile(r"\[file-tag:\s*[^]\r\n]*\]", re.IGNORECASE)
+_CODE_REFERENCE_START = "python?code_reference"
+_CODE_REFERENCE_QUERY_PREFIX = "python?code_reference&code_event_index="
+_FILE_TAG_START = "[file-tag:"
+_INTERNAL_ARTIFACT_PREFIXES = (
+    _CODE_REFERENCE_START,
+    _CODE_REFERENCE_QUERY_PREFIX,
+    _FILE_TAG_START,
+)
+
+
+def strip_google_internal_artifacts(text: str) -> str:
+    """Remove Gemini Web code-interpreter reference and file-tag UI artifacts from assistant text."""
+    if not isinstance(text, str) or not text:
+        return text or ""
+    return _FILE_TAG_RE.sub("", _CODE_REFERENCE_RE.sub("", text))
+
+
+def _stable_internal_artifact_prefix(text: str) -> str:
+    """Return a safe cumulative prefix, holding any incomplete internal artifact at its tail.
+
+    StreamGenerate supplies cumulative snapshots. A tag can therefore be split between snapshots; stripping
+    only complete matches would leak its first half. Hold a partial marker, an unclosed ``[file-tag: ...``
+    block, or a complete code reference at end-of-snapshot until a delimiter/final snapshot arrives.
+    """
+    if not text:
+        return ""
+    lowered = text.lower()
+    cut = len(text)
+
+    # Hold a file-tag block from its opening token until its closing bracket arrives.
+    search_from = 0
+    while True:
+        start = lowered.find(_FILE_TAG_START, search_from)
+        if start == -1:
+            break
+        if lowered.find("]", start + len(_FILE_TAG_START)) == -1:
+            cut = min(cut, start)
+            break
+        search_from = start + len(_FILE_TAG_START)
+
+    # Hold a trailing partial opening marker (including a query parameter split between upstream frames).
+    for marker in _INTERNAL_ARTIFACT_PREFIXES:
+        max_len = min(len(marker), len(lowered))
+        for size in range(max_len, 0, -1):
+            if lowered.endswith(marker[:size]):
+                cut = min(cut, len(lowered) - size)
+                break
+
+    # A fully formed code-reference tag at the very end may still gain another event-index digit. Keep it
+    # until a delimiter or the final snapshot confirms the boundary.
+    for match in _CODE_REFERENCE_RE.finditer(text):
+        if match.end() == len(text):
+            cut = min(cut, match.start())
+
+    return strip_google_internal_artifacts(text[:cut])
+
+
+def _stable_google_web_error_prefix(text: str) -> str:
+    """Hold a possible Google error prefix; raise before it can be streamed once it matches."""
+    if not text:
+        return ""
+    leading = len(text) - len(text.lstrip())
+    candidate = text[leading:]
+    matched = match_google_web_error_prefix(candidate)
+    if matched:
+        raise GoogleWebError(f"Google web error: {matched}")
+    if not candidate or any(phrase.startswith(candidate) for phrase in GOOGLE_WEB_ERROR_PHRASES):
+        return ""
+    return text
 
 
 def _stable_placeholder_prefix(text: str) -> str:
@@ -1683,7 +1784,9 @@ class GeminiWebClient:
                             last_text = text
                             # 计算"可安全 emit 的稳定前缀"：剥掉已完整的占位 URL，并 hold 住任何
                             # 尚未接收完整的占位 URL 尾部（避免泄露半截 googleusercontent 网址）。
-                            safe = _stable_placeholder_prefix(text)
+                            safe = _stable_placeholder_prefix(
+                                _stable_google_web_error_prefix(_stable_internal_artifact_prefix(text))
+                            )
                             # 帧是累积式：safe 应是 emitted 的扩展前缀。严格 append-only：
                             # 只在 safe 以 emitted 为前缀时追加新增尾部；非累积帧（思考/重排
                             # 导致 safe 不再以 emitted 为前缀，或占位串补全后变短）则 hold 住，
@@ -1748,6 +1851,7 @@ class GeminiWebClient:
                     result_images.append(entry)
             # 生图时模型文本里的占位 URL 无意义，过滤掉（与 _parse_output 一致）
             text = _IMAGE_GEN_PLACEHOLDER_RE.sub("", text).strip()
+        text = strip_google_internal_artifacts(text)
         stripped = text.strip()
         if stripped and _is_google_error_reply(stripped):
             raise GoogleWebError(f"Google web error: {stripped}")
@@ -1959,6 +2063,10 @@ class GeminiWebClient:
                         images = imgs
                     if payload[1]:
                         conv_id = str(payload[1])
+
+        # Gemini Web's native code interpreter can leak these UI annotations into assistant text. Strip them
+        # before error classification and before either streaming or non-streaming callers see the result.
+        text_content = strip_google_internal_artifacts(text_content)
 
         # 生图/找图时模型文本里会带 googleusercontent 占位 URL（无实际意义，真图在 images 里；
         # image_retrieval/image_collection 是检索占位客户端访问无效），无条件过滤，避免显示成网址

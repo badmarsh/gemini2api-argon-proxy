@@ -41,7 +41,11 @@ def test_stream_error_phrase_fails_the_response(gem_client, monkeypatch):
                                    gem_id=None, account_id=None, extended_thinking=False):
         yield {"type": "final", "text": _PHRASE, "conversation_id": "", "images": []}
 
+    async def fake_regeneration(*args, **kwargs):
+        raise RuntimeError(_PHRASE)
+
     monkeypatch.setattr(rr.gemini_client, "generate_stream", fake_generate_stream)
+    monkeypatch.setattr(rr.argon_fallback, "generate", fake_regeneration)
     with gem_client.stream("POST", "/v1/responses",
                            json={"model": "gemini-pro", "input": "hi", "stream": True},
                            headers=_AUTH) as r:

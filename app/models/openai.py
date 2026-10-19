@@ -89,6 +89,14 @@ class ModelInfo(BaseModel):
     object: str = "model"
     created: int = 0
     owned_by: str = "google"
+    # OpenAI's model-list schema does not standardize modalities, so expose optional, explicit hints for
+    # clients that choose image handling from /v1/models. They are omitted for third-party models unless known.
+    vision: bool | None = None
+    supports_vision: bool | None = None
+    multimodal: bool | None = None
+    input_modalities: list[str] | None = None
+    output_modalities: list[str] | None = None
+    capabilities: list[str] | None = None
 
 
 class ModelList(BaseModel):

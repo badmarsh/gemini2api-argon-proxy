@@ -22,6 +22,79 @@ SSE_KEEPALIVE_INTERVAL: float = 10.0
 SSE_KEEPALIVE_FRAME: str = ": ping\n\n"
 
 
+class InitialPrefixBuffer:
+    """Hold initial text until it cannot be a sensitive/error prefix.
+
+    Streaming model output is append-only, so a prefix cannot be retracted once sent. This small gate buffers
+    only the beginning of a response while it could still match one of ``prefixes``. It releases the buffered
+    text as soon as it diverges, or reports a matching prefix without releasing any of it.
+
+    Leading whitespace is ignored for matching (the non-streaming error checks strip before ``startswith``),
+    but is preserved if the text is released. ``max_prefix_length`` exposes the required upper bound for
+    callers/tests; with a finite prefix set the unresolved non-whitespace buffer cannot grow beyond it.
+    """
+
+    def __init__(self, prefixes, *, ignore_leading_whitespace: bool = True):
+        self.prefixes = tuple(prefix for prefix in prefixes if isinstance(prefix, str) and prefix)
+        self.max_prefix_length = max((len(prefix) for prefix in self.prefixes), default=0)
+        self.ignore_leading_whitespace = ignore_leading_whitespace
+        self._pending = ""
+        self._resolved = False
+        self.matched_prefix: str | None = None
+
+    def _candidate(self, text: str) -> str:
+        return text.lstrip() if self.ignore_leading_whitespace else text
+
+    def match(self, text: str) -> str | None:
+        """Return the matching configured prefix, if ``text`` starts with one."""
+        candidate = self._candidate(text)
+        return next((prefix for prefix in self.prefixes if candidate.startswith(prefix)), None)
+
+    def feed(self, text: str) -> tuple[str, str | None]:
+        """Return ``(safe_text, matched_prefix)`` for the next piece of the stream.
+
+        Once a match is found the pending prefix is discarded and the buffer remains resolved. Once the text
+        diverges from every possible prefix, all pending text is safe and is released; subsequent input passes
+        straight through.
+        """
+        if not text:
+            return "", self.matched_prefix
+        if self._resolved:
+            return text, self.matched_prefix
+
+        self._pending += text
+        matched = self.match(self._pending)
+        if matched:
+            self.matched_prefix = matched
+            self._pending = ""
+            self._resolved = True
+            return "", matched
+
+        candidate = self._candidate(self._pending)
+        if not candidate or any(prefix.startswith(candidate) for prefix in self.prefixes):
+            return "", None
+
+        safe_text = self._pending
+        self._pending = ""
+        self._resolved = True
+        return safe_text, None
+
+    def finish(self) -> tuple[str, str | None]:
+        """Resolve a stream that ended before its prefix could be disambiguated."""
+        if self._resolved:
+            return "", self.matched_prefix
+        matched = self.match(self._pending)
+        if matched:
+            self.matched_prefix = matched
+            self._pending = ""
+            self._resolved = True
+            return "", matched
+        safe_text = self._pending
+        self._pending = ""
+        self._resolved = True
+        return safe_text, None
+
+
 async def iter_with_keepalive(agen, interval: float | None = None) -> AsyncIterator[tuple[str, Any]]:
     """包住 async 生成器 agen：
       - 每个上游事件 → yield ("evt", evt)

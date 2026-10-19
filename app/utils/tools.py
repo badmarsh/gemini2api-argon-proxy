@@ -277,10 +277,11 @@ def maybe_image_generation_intent(text: str) -> bool:
 # instruction voice and deliberately blunt: "promise" phrasing is what makes a harness end the turn.
 TOOL_LOOP_REMINDER = (
     "[MANDATORY — READ BEFORE ANSWERING]\n"
-    "You are inside a tool loop. If the task needs a command, a file read or a file write, ANSWER WITH THE "
-    "tool_call JSON AND NOTHING ELSE — do it in this message.\n"
-    "Never answer with a promise, a plan, a status update or a progress report ('I will inspect...', "
-    "'Let me check...', 'Working on it...', 'I'll let you know...'). Those end the turn and the work stops.\n"
+    "You are inside a tool loop. If the task needs a command, a file read or a file write, you MUST output "
+    "the JSON tool_calls array immediately, with no surrounding prose — do it in this message.\n"
+    "Do NOT describe what a tool or sub-agent will do. Never answer with a promise, a plan, a status update or "
+    "a progress report ('I will inspect...', 'Let me check...', 'Working on it...', 'I'll let you know...'). "
+    "Those end the turn and the work stops.\n"
     "Text is only for the FINAL answer, after the work is done and verified, or for a question you truly "
     "cannot answer with the tools you have."
 )
@@ -295,30 +296,46 @@ def _tool_loop_reminder_enabled() -> bool:
         return True
 
 
+_EXECUTION_TOOL_RE = re.compile(
+    r"\b(?:exec(?:ute|ution)?|shell|bash|zsh|terminal|javascript|js|node(?:\.js)?|v8|python|"
+    r"code[ _-]?interpreter|sandbox|isolate)\b",
+    re.IGNORECASE,
+)
+
+
 def build_tool_prompt(prompt: str, tools: list[dict], tool_choice=None) -> str:
     if not tools:
         return prompt
 
     tool_descriptions = []
+    has_execution_tool = False
     for tool in tools:
         if isinstance(tool, dict):
             func = tool.get("function", tool)
             name = func.get("name", "")
             desc = func.get("description", "")
             params = func.get("parameters", func.get("input_schema", {}))
-            tool_descriptions.append(
-                f"- {name}: {desc}\n  Parameters: {json.dumps(params, ensure_ascii=False)}"
-            )
+            params_json = json.dumps(params, ensure_ascii=False)
+            tool_descriptions.append(f"- {name}: {desc}\n  Parameters: {params_json}")
+            tool_signature = re.sub(r"[_-]+", " ", f"{name} {desc} {params_json}")
+            has_execution_tool = has_execution_tool or bool(_EXECUTION_TOOL_RE.search(tool_signature))
 
     tools_text = "\n".join(tool_descriptions)
+    action_directive = (
+        "When the user's request implies use of an available tool or sub-agent, do not roleplay a plan, "
+        "write conversational narration, use Markdown headings/lists/diagrams, explain your intentions, "
+        "or send a progress update. Do NOT describe what a tool or sub-agent will do. "
+        "You MUST output the JSON tool_calls array "
+        "immediately, with no conversational prose before or after it. "
+    )
 
-    choice_instruction = ""
     if tool_choice == "required":
         choice_instruction = "You MUST use one of the available tools. "
     elif tool_choice == "none":
         choice_instruction = "Do NOT use any tools. Respond with text only. "
     elif isinstance(tool_choice, dict):
-        forced_name = tool_choice.get("function", {}).get("name", "")
+        function = tool_choice.get("function")
+        forced_name = function.get("name", "") if isinstance(function, dict) else tool_choice.get("name", "")
         choice_instruction = f"You MUST use the tool: {forced_name}. "
     else:
         choice_instruction = (
@@ -329,21 +346,47 @@ def build_tool_prompt(prompt: str, tools: list[dict], tool_choice=None) -> str:
             "Never ask for permission to turn on Workspace apps. "
         )
 
+    if tool_choice != "none":
+        choice_instruction += action_directive
+
+    if tool_choice == "none":
+        text_reply_instruction = (
+            "This request explicitly forbids tool use. Reply with text only; do not emit tool_calls.\n"
+        )
+    elif tool_choice == "required" or isinstance(tool_choice, dict):
+        text_reply_instruction = (
+            "A plain-text/status response is invalid for this request; you must emit a tool_use object.\n"
+        )
+    else:
+        text_reply_instruction = (
+            "To reply with plain text instead, output this only when the request does not imply tool use:\n"
+            '{"status": "text", "content": "<your reply>"}\n\n'
+        )
+
+    execution_rule = ""
+    if has_execution_tool:
+        execution_rule = (
+            "EXECUTION SANDBOX LIFECYCLE RULE: For JavaScript/V8 and shell execution tools, top-level "
+            "promises in JavaScript must be directly awaited; NEVER use an unawaited "
+            "(async () => { ... })() wrapper. Use top-level await (or directly await each promise) so the isolate remains alive until the "
+            "tool work completes.\n"
+        )
+
     system_block = (
         f"You have access to the following tools:\n{tools_text}\n\n"
         f"{choice_instruction}\n"
         "To CALL a tool, output a JSON object EXACTLY like this (tool_calls MUST be an array):\n"
         '{"status": "tool_use", "tool_calls": [{"name": "<tool_name>", "arguments": {<args>}}]}\n\n'
-        "To reply with plain text instead, output:\n"
-        '{"status": "text", "content": "<your reply>"}\n\n'
+        f"{text_reply_instruction}"
         "STRICT JSON RULES (follow exactly, or the call fails):\n"
         '1. Use double quotes for all keys and string values. Escape inner quotes as \\" and newlines as \\n.\n'
         "2. \"tool_calls\" is ALWAYS a JSON array [ ... ], even for a single call.\n"
         "3. \"arguments\" is a JSON object with the tool's parameters.\n"
-        "4. Output ONLY the JSON (a ```json code block is allowed, nothing else).\n\n"
+        "4. Output ONLY the JSON (a ```json code block is allowed, nothing else).\n"
+        f"{execution_rule}\n"
         "Example (calling a tool named run with a command argument):\n"
         '{"status": "tool_use", "tool_calls": [{"name": "run", "arguments": {"command": "ls -la"}}]}\n\n'
-        "Example (plain text reply):\n"
+        "Example (plain text reply when no tool is needed):\n"
         '{"status": "text", "content": "Hello, how can I help?"}'
     )
 
@@ -365,6 +408,14 @@ def _strip_code_fence(text: str) -> str:
         if s.rstrip().endswith("```"):
             s = s.rstrip()[:-3]
     return s.strip()
+
+
+def _extract_fenced_json_blocks(text: str) -> list[str]:
+    """Return the contents of complete Markdown `````json`` fences in conversational text.
+
+    The closing fence is required; a truncated fenced payload is never closed or repaired here.
+    """
+    return [match.group(1).strip() for match in re.finditer(r"```json\s*(.*?)```", text, re.IGNORECASE | re.DOTALL)]
 
 
 def _extract_json_object(text: str) -> str | None:
@@ -489,8 +540,8 @@ def _try_parse(text: str, diagnostics: MutableMapping | None = None) -> dict | N
     return _unwrap_text_status_envelope(text)
 
 
-def parse_tool_response(text: str, *, diagnostics: MutableMapping | None = None) -> dict:
-    """Parse the model's prompt-simulated tool-call response.
+def _parse_tool_response(text: str, *, diagnostics: MutableMapping | None = None) -> dict:
+    """Parse the model's prompt-simulated tool-call response without tool_choice constraints.
 
     The return shape remains backwards-compatible. When ``diagnostics`` is supplied it receives the response
     length, the last JSON decoder reason and whether the narrow complete-string quote repair was used.
@@ -530,6 +581,14 @@ def parse_tool_response(text: str, *, diagnostics: MutableMapping | None = None)
         if r:
             _clean_success(diagnostics, len(text))
             return r
+    # 2b. 对话文本中的完整 ```json ... ``` 块优先解析。不能只找第一个大括号：自然语言或
+    # 前置示例也可能含花括号，而后面的 fenced block 才是真正的工具调用。
+    for fenced_candidate in _extract_fenced_json_blocks(text):
+        r = _try_parse(fenced_candidate, diagnostics)
+        if r:
+            _clean_success(diagnostics, len(text))
+            return r
+
     # 3. 从文本中提取第一个完整 JSON 对象后解析
     candidate = _extract_json_object(stripped)
     if candidate:
@@ -606,6 +665,32 @@ def parse_tool_response(text: str, *, diagnostics: MutableMapping | None = None)
     return {"type": "text", "content": text}
 
 
+def parse_tool_response(text: str, *, diagnostics: MutableMapping | None = None,
+                        tool_choice=None, require_tool: bool = False) -> dict:
+    """Parse a tool response and optionally require a tool call.
+
+    ``tool_choice="required"`` (or a forced-function choice) turns conversational/plain-text replies into a
+    malformed-tool result so the caller's normal one-shot regeneration path can correct them. The default is
+    deliberately unchanged for ``auto`` and non-agent callers.
+    """
+    parsed = _parse_tool_response(text, diagnostics=diagnostics)
+    forced_choice = isinstance(tool_choice, dict) and bool(
+        tool_choice.get("function") or tool_choice.get("name")
+    )
+    must_call = require_tool or tool_choice == "required" or forced_choice
+    if must_call and parsed.get("type") != "tool_calls":
+        if diagnostics is not None:
+            diagnostics.update({
+                "response_length": len(text) if isinstance(text, str) else 0,
+                "failure_class": "required_tool_missing",
+                "error": "tool_choice requires a valid tool call",
+                "repaired": False,
+                "truncated_suspected": _looks_truncated_json(text) if isinstance(text, str) else False,
+            })
+        return {"type": "text", "content": MALFORMED_TOOL_NOTICE}
+    return parsed
+
+
 def is_malformed_tool_result(parsed) -> bool:
     """判断 parse_tool_response 的结果是不是「畸形工具 JSON」的降级提示。"""
     return (
@@ -624,14 +709,16 @@ def _publish_parse_diagnostics(diagnostics: MutableMapping) -> None:
 
 
 async def parse_tool_response_with_retry(text: str, regenerate, *, budget=None,
-                                         diagnostics: MutableMapping | None = None) -> dict:
+                                         diagnostics: MutableMapping | None = None,
+                                         tool_choice=None, require_tool: bool = False) -> dict:
     """Parse a tool response and, if necessary, regenerate at most once.
 
     ``budget`` is shared with ``agent_loop.guard_tool_loop`` by every router. A missing budget keeps the
     standalone helper's historical one-retry behaviour for callers that use it directly.
     """
     local_diagnostics = diagnostics if diagnostics is not None else {}
-    parsed = parse_tool_response(text, diagnostics=local_diagnostics)
+    parsed = parse_tool_response(text, diagnostics=local_diagnostics,
+                                 tool_choice=tool_choice, require_tool=require_tool)
     if regenerate is None or not is_malformed_tool_result(parsed):
         _publish_parse_diagnostics(local_diagnostics)
         return parsed
@@ -657,7 +744,8 @@ async def parse_tool_response_with_retry(text: str, regenerate, *, budget=None,
         return parsed
 
     retried_diagnostics = {}
-    retried = parse_tool_response(retry_text, diagnostics=retried_diagnostics)
+    retried = parse_tool_response(retry_text, diagnostics=retried_diagnostics,
+                                  tool_choice=tool_choice, require_tool=require_tool)
     if diagnostics is not None:
         diagnostics["retry"] = retried_diagnostics
     _publish_parse_diagnostics(retried_diagnostics if not is_malformed_tool_result(retried) else (diagnostics or retried_diagnostics))
