@@ -25,12 +25,14 @@ class AgentSandbox:
 
     def _resolve_safe(self, rel_or_abs_path: str) -> Path:
         """Resolve a path and ensure it remains strictly inside the sandbox root."""
-        clean = Path(rel_or_abs_path)
-        if clean.is_absolute():
-            # If absolute, it must start with root
-            target = clean.resolve()
-        else:
-            target = (self.root / clean).resolve()
+        p_str = str(rel_or_abs_path).strip().replace("\\", "/")
+        for prefix in ["/sandbox/", "sandbox/", "./sandbox/", "/workspace/sandbox/", "/workspace/", "/"]:
+            if p_str.startswith(prefix):
+                p_str = p_str[len(prefix):]
+                break
+
+        clean = Path(p_str)
+        target = (self.root / clean).resolve()
 
         try:
             target.relative_to(self.root)
@@ -41,13 +43,19 @@ class AgentSandbox:
         return target
 
     def write_file(self, path: str, content: str) -> Dict[str, Any]:
-        target = self._resolve_safe(path)
+        try:
+            target = self._resolve_safe(path)
+        except SandboxViolationError as e:
+            return {"status": "error", "message": str(e)}
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
         return {"status": "ok", "path": str(target.relative_to(self.root)), "bytes_written": len(content.encode("utf-8"))}
 
     def read_file(self, path: str) -> Dict[str, Any]:
-        target = self._resolve_safe(path)
+        try:
+            target = self._resolve_safe(path)
+        except SandboxViolationError as e:
+            return {"status": "error", "message": str(e)}
         if not target.exists():
             return {"status": "error", "message": f"File not found: {path}"}
         if not target.is_file():
@@ -56,11 +64,12 @@ class AgentSandbox:
         return {"status": "ok", "path": str(target.relative_to(self.root)), "content": content}
 
     def list_dir(self, path: str = ".") -> Dict[str, Any]:
-        target = self._resolve_safe(path)
+        try:
+            target = self._resolve_safe(path)
+        except SandboxViolationError as e:
+            return {"status": "error", "message": str(e)}
         if not target.exists():
             return {"status": "error", "message": f"Directory not found: {path}"}
-        if not target.is_dir():
-            return {"status": "error", "message": f"Not a directory: {path}"}
         entries = []
         for p in sorted(target.iterdir()):
             entries.append({
@@ -68,7 +77,7 @@ class AgentSandbox:
                 "is_dir": p.is_dir(),
                 "size": p.stat().st_size if p.is_file() else None,
             })
-        return {"status": "ok", "entries": entries}
+        return {"status": "ok", "path": str(target.relative_to(self.root)), "entries": entries}
 
     def run_command(self, command: str, timeout: int = 60) -> Dict[str, Any]:
         """Execute a command in the sandbox with scrubbed environment."""

@@ -23,6 +23,8 @@ os.environ.setdefault("VERSION_SYNC_ENABLED", "false")
 os.environ.setdefault("USAGE_STATS_ENABLED", "false")
 os.environ.setdefault("CHAT_CLEANUP_ENABLED", "false")
 os.environ.setdefault("RATE_LIMIT_ENABLED", "false")
+os.environ["ARGON_FALLBACK_TO_FLASH"] = "true"
+os.environ["ARGON_STALL_BREAKER_SECONDS"] = "180"
 
 # ConversationStore persists to $DATA_DIR/conversations (default ./data) and deletes entries
 # beyond its cap. Force a throwaway dir (not setdefault) before any `app.*` import so a test

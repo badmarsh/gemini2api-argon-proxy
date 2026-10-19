@@ -41,17 +41,36 @@ def extract_json(s: str) -> Any:
     if not s:
         return {}
     s = s.strip()
-    if s.startswith("```"):
-        s = re.sub(r"^```[a-zA-Z0-9]*\s*\n?", "", s)
-        if s.rstrip().endswith("```"):
-            s = s.rstrip()[:-3].strip()
     try:
-        return json.loads(s)
+        return json.loads(s, strict=False)
     except Exception:
-        m = re.search(r"(\{.*\}|\[.*\])", s, re.DOTALL)
-        if m:
-            return json.loads(m.group(1))
-        raise
+        pass
+    if s.startswith("```"):
+        cleaned = re.sub(r"^```[a-zA-Z0-9_-]*\s*\n?", "", s)
+        if cleaned.rstrip().endswith("```"):
+            cleaned = cleaned.rstrip()[:-3].strip()
+        try:
+            return json.loads(cleaned, strict=False)
+        except Exception:
+            pass
+    fence_match = re.search(r"```(?:json)?\s*([\s\S]*?)```", s)
+    if fence_match:
+        try:
+            return json.loads(fence_match.group(1).strip(), strict=False)
+        except Exception:
+            pass
+    m = re.search(r"(\{[\s\S]*\}|\[[\s\S]*\])", s)
+    if m:
+        candidate = m.group(1)
+        try:
+            return json.loads(candidate, strict=False)
+        except Exception:
+            cleaned = re.sub(r'[\x00-\x1f]', lambda ch: f'\\u{ord(ch.group()):04x}' if ch.group() not in '\r\n\t' else ch.group(), candidate)
+            try:
+                return json.loads(cleaned, strict=False)
+            except Exception:
+                pass
+    raise ValueError(f"Could not extract valid JSON from response: {s[:200]}...")
 
 
 def resolve_api_key(cli_key: Optional[str] = None) -> str:
@@ -151,6 +170,7 @@ class BabysitRunner:
             "model": model,
             "messages": messages,
             "stream": False,
+            "max_tokens": 4096,
         }
         if tools:
             body["tools"] = tools
@@ -197,19 +217,31 @@ class BabysitRunner:
             "- expected_behavior: {success_criteria, timeout_seconds>=360}"
         )
 
-        logger.info(f"Orchestrator ({self.orchestrator_model}) generating task for category: {cat}...")
-        orch_resp = self._call_api(
-            messages=[
-                {"role": "system", "content": self.orch_prompt},
-                {"role": "user", "content": orch_query},
-            ],
-            model=self.orchestrator_model,
-            role="orchestrator",
-            timeout=120.0,
-        )
-        content = orch_resp["choices"][0]["message"]["content"]
-        task_data = extract_json(content)
-        task = task_data.get("task", task_data)
+        task = None
+        for attempt in range(3):
+            logger.info(f"Orchestrator ({self.orchestrator_model}) generating task for category: {cat} (attempt {attempt + 1}/3)...")
+            try:
+                orch_resp = self._call_api(
+                    messages=[
+                        {"role": "system", "content": self.orch_prompt},
+                        {"role": "user", "content": orch_query},
+                    ],
+                    model=self.orchestrator_model,
+                    role="orchestrator",
+                    timeout=120.0,
+                )
+                content = orch_resp["choices"][0]["message"]["content"]
+                task_data = extract_json(content)
+                task = task_data.get("task", task_data)
+                if isinstance(task, dict) and task.get("title"):
+                    break
+            except Exception as e:
+                logger.warning(f"Orchestrator generation attempt {attempt + 1} failed: {e}")
+                time.sleep(3)
+
+        if not task or not isinstance(task, dict):
+            logger.error(f"Failed to generate valid task for category {cat}")
+            return False
 
         task_id = task.get("task_id", f"task_{task_idx}_{int(time.time())}")
         task["task_id"] = task_id
@@ -300,15 +332,34 @@ class BabysitRunner:
                     except Exception:
                         args = {}
 
-                    if fn_name == "execute_command" and "command" in args:
-                        res = sandbox.execute_command(args["command"])
+                    if fn_name in ("run_command", "execute_command") and "command" in args:
+                        res = sandbox.run_command(args["command"])
                         output = res.get("stdout", "") + (res.get("stderr", "") if res.get("stderr") else "")
+                        if not output and res.get("status") == "ok":
+                            output = f"Command exited with code {res.get('exit_code', 0)}"
+                        elif not output:
+                            output = json.dumps(res)
+                    elif fn_name == "python_eval" and "code" in args:
+                        res = sandbox.run_command(f'python3 -c {json.dumps(args["code"])}')
+                        output = res.get("stdout", "") + (res.get("stderr", "") if res.get("stderr") else "")
+                        if not output and res.get("status") == "ok":
+                            output = f"Python completed with code {res.get('exit_code', 0)}"
+                        elif not output:
+                            output = json.dumps(res)
                     elif fn_name == "read_file" and "path" in args:
-                        output = sandbox.read_file(args["path"])
+                        res = sandbox.read_file(args["path"])
+                        output = res.get("content", "") if res.get("status") == "ok" else json.dumps(res)
                     elif fn_name == "write_file" and "path" in args and "content" in args:
-                        output = sandbox.write_file(args["path"], args["content"])
+                        res = sandbox.write_file(args["path"], args["content"])
+                        output = json.dumps(res)
+                    elif fn_name == "list_dir":
+                        res = sandbox.list_dir(args.get("path", "."))
+                        output = json.dumps(res)
                     else:
                         output = f"Tool {fn_name} executed with result: OK"
+
+                    if not isinstance(output, str):
+                        output = json.dumps(output)
 
                     messages.append({
                         "role": "tool",
@@ -354,26 +405,34 @@ Produce a JSON object with top-level key 'finding' conforming strictly to findin
 - evidence ({{request_id, timestamp, quoted_log, metric_name, metric_value, task_id}})
 - proposed_fix (actionable engineering recommendation)
 """
-        try:
-            mon_resp = self._call_api(
-                messages=[
-                    {"role": "system", "content": self.mon_prompt},
-                    {"role": "user", "content": mon_input},
-                ],
-                model=self.monitor_model,
-                role="monitor",
-                timeout=120.0,
-            )
-            mon_content = mon_resp["choices"][0]["message"]["content"]
-            mon_data = extract_json(mon_content)
-            finding = mon_data.get("finding", mon_data)
-            finding["task_id"] = task_id
+        finding = None
+        for mon_attempt in range(2):
+            try:
+                mon_resp = self._call_api(
+                    messages=[
+                        {"role": "system", "content": self.mon_prompt},
+                        {"role": "user", "content": mon_input},
+                    ],
+                    model=self.monitor_model,
+                    role="monitor",
+                    timeout=120.0,
+                )
+                mon_content = mon_resp["choices"][0]["message"]["content"]
+                mon_data = extract_json(mon_content)
+                finding = mon_data.get("finding", mon_data)
+                if isinstance(finding, dict) and finding.get("summary"):
+                    finding["task_id"] = task_id
+                    break
+            except Exception as e:
+                logger.warning(f"Monitor attempt {mon_attempt + 1} failed: {e}")
+                time.sleep(2)
 
+        if finding and isinstance(finding, dict):
             logger.info(f"Monitor Finding [{finding.get('category')} / {finding.get('severity')}]: {finding.get('summary')}")
             with open(self.findings_file, "a", encoding="utf-8") as f:
                 f.write(json.dumps(finding) + "\n")
-        except Exception as e:
-            logger.error(f"Monitor failed to produce finding: {e}")
+        else:
+            logger.error(f"Monitor failed to produce valid finding for {task_id}")
 
         self.completed_task_ids.add(task_id)
         self.completed_file.write_text(json.dumps(list(self.completed_task_ids), indent=2), encoding="utf-8")
@@ -381,7 +440,12 @@ Produce a JSON object with top-level key 'finding' conforming strictly to findin
 
     def run(self):
         logger.info(f"Starting BabysitRunner for run_id='{self.run_id}', max_tasks={self.max_tasks}...")
-        for i in range(1, self.max_tasks + 1):
+        start_idx = len(self.completed_task_ids) + 1
+        if start_idx > self.max_tasks:
+            logger.info(f"All {self.max_tasks} tasks already completed for run_id='{self.run_id}'.")
+            return
+
+        for i in range(start_idx, self.max_tasks + 1):
             if self.is_stopped():
                 break
             success = self.run_task(i)

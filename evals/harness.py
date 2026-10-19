@@ -23,6 +23,8 @@ def ensure_env() -> Path:
     os.environ.setdefault("USAGE_STATS_ENABLED", "false")
     os.environ.setdefault("CHAT_CLEANUP_ENABLED", "false")
     os.environ.setdefault("RATE_LIMIT_ENABLED", "false")
+    os.environ["ARGON_FALLBACK_TO_FLASH"] = "true"
+    os.environ["ARGON_STALL_BREAKER_SECONDS"] = "180"
     data = Path(tempfile.mkdtemp(prefix="g2a-evals-data-"))
     os.environ["DATA_DIR"] = str(data)
     import app.core.settings_overrides as so  # noqa: PLC0415

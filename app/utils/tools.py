@@ -506,21 +506,36 @@ def parse_tool_response(text: str, *, diagnostics: MutableMapping | None = None)
     if not isinstance(text, str) or not text.strip():
         return {"type": "text", "content": text or ""}
 
+    def _clean_success(diag: MutableMapping | None, length: int) -> None:
+        if diag is None:
+            return
+        diag.pop("failure_class", None)
+        diag.pop("error", None)
+        diag.pop("position", None)
+        diag.update({
+            "response_length": length,
+            "repaired": False,
+            "truncated_suspected": False,
+        })
+
     # 1. 直接解析
     r = _try_parse(text, diagnostics)
     if r:
+        _clean_success(diagnostics, len(text))
         return r
     # 2. 剥离 markdown 代码块后解析
     stripped = _strip_code_fence(text)
     if stripped != text:
         r = _try_parse(stripped, diagnostics)
         if r:
+            _clean_success(diagnostics, len(text))
             return r
     # 3. 从文本中提取第一个完整 JSON 对象后解析
     candidate = _extract_json_object(stripped)
     if candidate:
         r = _try_parse(candidate, diagnostics)
         if r:
+            _clean_success(diagnostics, len(text))
             return r
 
     # 3b. 尝试最外层大括号提取（防内层嵌套引号破坏深度扫描）
@@ -532,6 +547,7 @@ def parse_tool_response(text: str, *, diagnostics: MutableMapping | None = None)
         if outer_candidate != candidate:
             r = _try_parse(outer_candidate, diagnostics)
             if r:
+                _clean_success(diagnostics, len(text))
                 return r
 
     # 4. A complete object with an otherwise valid structure may contain an unescaped quote in an argument
@@ -582,9 +598,11 @@ def parse_tool_response(text: str, *, diagnostics: MutableMapping | None = None)
     # 5. Try to unwrap a text envelope so raw JSON does not leak to clients.
     envelope = _unwrap_text_status_envelope(text)
     if envelope:
+        _clean_success(diagnostics, len(text))
         return envelope
 
     # 普通文本（非工具意图）原样返回
+    _clean_success(diagnostics, len(text))
     return {"type": "text", "content": text}
 
 

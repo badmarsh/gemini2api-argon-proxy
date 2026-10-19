@@ -635,7 +635,17 @@ async def list_babysit_runs():
         trace_file = item / "argon_trace.jsonl"
         metrics_file = item / "metrics.jsonl"
         summary_file = item / "summary.json"
+        completed_file = item / "completed_tasks.json"
         run_stop = (item / "STOP_BABYSIT").exists() or (item / "STOP").exists()
+
+        completed_ids = set()
+        if completed_file.exists():
+            try:
+                c_data = json.loads(completed_file.read_text(encoding="utf-8", errors="replace"))
+                if isinstance(c_data, list):
+                    completed_ids = set(c_data)
+            except Exception:
+                pass
 
         task_count = 0
         task_completed = 0
@@ -647,8 +657,9 @@ async def list_babysit_runs():
                         task_count += 1
                         try:
                             obj = json.loads(line)
+                            tid = obj.get("task_id") or obj.get("id") or ""
                             status = obj.get("status", "")
-                            if status == "completed":
+                            if status == "completed" or tid in completed_ids:
                                 task_completed += 1
                             elif status == "failed":
                                 task_failed += 1
@@ -656,6 +667,9 @@ async def list_babysit_runs():
                             pass
             except Exception:
                 pass
+        if completed_ids:
+            task_completed = max(task_completed, len(completed_ids))
+            task_count = max(task_count, task_completed)
 
         findings_count = 0
         crit_count = 0
@@ -666,7 +680,7 @@ async def list_babysit_runs():
                         findings_count += 1
                         try:
                             f_obj = json.loads(line)
-                            if f_obj.get("severity") in ("CRITICAL", "HIGH"):
+                            if str(f_obj.get("severity", "")).upper() in ("CRITICAL", "HIGH", "ERROR"):
                                 crit_count += 1
                         except Exception:
                             pass
@@ -687,9 +701,29 @@ async def list_babysit_runs():
             except Exception:
                 pass
 
+        is_empty = bool(task_count == 0 and trace_count == 0 and findings_count == 0)
+        if is_empty:
+            display_label = f"{run_id} • (prázdny test)"
+            status_tag = "empty"
+        elif run_id == "smoke-run-01":
+            display_label = f"{run_id} • (Smoke Test zo 17.10.)"
+            status_tag = "smoke_test"
+        elif task_completed > 0 and crit_count == 0:
+            display_label = f"{run_id} • {task_completed}/{task_count} úloh • 0 chýb (Overený run)"
+            status_tag = "verified"
+        elif crit_count > 0:
+            display_label = f"{run_id} • {task_completed}/{task_count} úloh • {crit_count} findings (Baseline run)"
+            status_tag = "baseline"
+        else:
+            display_label = f"{run_id} • {task_completed}/{task_count} úloh"
+            status_tag = "standard"
+
         mtime = item.stat().st_mtime
         runs.append({
             "run_id": run_id,
+            "display_label": display_label,
+            "status_tag": status_tag,
+            "is_empty": is_empty,
             "mtime": mtime,
             "mtime_iso": datetime.fromtimestamp(mtime).isoformat(),
             "task_count": task_count,
@@ -737,6 +771,27 @@ async def get_babysit_run(run_id: str):
     trace = read_jsonl(target / "argon_trace.jsonl", max_lines=200)
     metrics = read_jsonl(target / "metrics.jsonl", max_lines=100)
 
+    completed_file = target / "completed_tasks.json"
+    completed_ids = []
+    if completed_file.exists():
+        try:
+            c_data = json.loads(completed_file.read_text(encoding="utf-8", errors="replace"))
+            if isinstance(c_data, list):
+                completed_ids = [str(x) for x in c_data if isinstance(x, (str, int))]
+        except Exception:
+            pass
+
+    completed_set = set(completed_ids)
+    if not tasks and completed_ids:
+        tasks = [{"task_id": cid, "status": "completed"} for cid in completed_ids]
+    else:
+        for t in tasks:
+            tid = t.get("task_id") or t.get("id") or ""
+            if tid in completed_set:
+                t["status"] = "completed"
+            elif not t.get("status"):
+                t["status"] = "in_progress"
+
     summary = None
     summary_file = target / "summary.json"
     if summary_file.exists():
@@ -753,10 +808,31 @@ async def get_babysit_run(run_id: str):
         or Path("STOP_BABYSIT").exists()
     )
 
+    is_empty = bool(len(tasks) == 0 and len(trace) == 0 and len(findings) == 0 and len(completed_ids) == 0)
+    if is_empty:
+        display_label = f"{run_id} • (prázdny test)"
+        status_tag = "empty"
+    elif run_id == "smoke-run-01":
+        display_label = f"{run_id} • (Smoke Test zo 17.10.)"
+        status_tag = "smoke_test"
+    elif len(completed_ids) > 0 and not any(str(f.get("severity", "")).upper() in ("CRITICAL", "ERROR", "HIGH") for f in findings):
+        display_label = f"{run_id} • {len(completed_ids)}/{len(tasks)} úloh • 0 chýb (Overený run)"
+        status_tag = "verified"
+    elif any(str(f.get("severity", "")).upper() in ("CRITICAL", "ERROR", "HIGH") for f in findings):
+        display_label = f"{run_id} • {len(completed_ids)}/{len(tasks)} úloh • Baseline run"
+        status_tag = "baseline"
+    else:
+        display_label = run_id
+        status_tag = "standard"
+
     return {
         "run_id": run_id,
+        "display_label": display_label,
+        "status_tag": status_tag,
+        "is_empty": is_empty,
         "stopped": is_stopped,
         "tasks": tasks,
+        "completed_task_ids": list(completed_ids),
         "findings": findings,
         "trace": trace,
         "metrics": metrics,

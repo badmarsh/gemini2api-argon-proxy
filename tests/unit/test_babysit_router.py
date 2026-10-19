@@ -123,3 +123,94 @@ def test_babysit_kill_switch_lifecycle(client, tmp_path, monkeypatch):
     # Detail now reflects resumed
     resp_detail_after = _get(client, "/admin/babysit/runs/exp-switch-test")
     assert resp_detail_after.json()["stopped"] is False
+
+
+def test_babysit_runs_with_completed_tasks_file(client, tmp_path, monkeypatch):
+    import app.routers.admin as admin_module
+
+    monkeypatch.setattr(admin_module, "_get_runs_root", lambda: tmp_path)
+    run_dir = tmp_path / "exp-completed-test"
+    run_dir.mkdir(parents=True)
+
+    # Orchestrator tasks without status property
+    (run_dir / "tasks.jsonl").write_text(
+        json.dumps({"task_id": "T-101", "prompt": "Task 1"}) + "\n" +
+        json.dumps({"task_id": "T-102", "prompt": "Task 2"}) + "\n",
+        encoding="utf-8"
+    )
+    # Runner completion file
+    (run_dir / "completed_tasks.json").write_text(
+        json.dumps(["T-101", "T-102"]),
+        encoding="utf-8"
+    )
+    # Findings with severity: error
+    (run_dir / "findings.jsonl").write_text(
+        json.dumps({"finding_id": "F-1", "severity": "error", "summary": "Tool parse issue"}) + "\n",
+        encoding="utf-8"
+    )
+
+    # Test list endpoint
+    resp = _get(client, "/admin/babysit/runs")
+    assert resp.status_code == 200
+    runs = resp.json()["runs"]
+    assert len(runs) == 1
+    assert runs[0]["task_count"] == 2
+    assert runs[0]["task_completed"] == 2
+    assert runs[0]["critical_findings"] == 1
+
+    # Test detail endpoint
+    resp_detail = _get(client, "/admin/babysit/runs/exp-completed-test")
+    assert resp_detail.status_code == 200
+    detail = resp_detail.json()
+    assert detail["completed_task_ids"] == ["T-101", "T-102"]
+    assert all(t["status"] == "completed" for t in detail["tasks"])
+
+
+def test_babysit_runs_completed_tasks_without_tasks_file(client, tmp_path, monkeypatch):
+    import app.routers.admin as admin_module
+
+    monkeypatch.setattr(admin_module, "_get_runs_root", lambda: tmp_path)
+    run_dir = tmp_path / "exp-no-tasks-file"
+    run_dir.mkdir(parents=True)
+
+    # Runner completion file only, no tasks.jsonl
+    (run_dir / "completed_tasks.json").write_text(
+        json.dumps(["T-201", "T-202", "T-203"]),
+        encoding="utf-8"
+    )
+
+    resp = _get(client, "/admin/babysit/runs")
+    assert resp.status_code == 200
+    runs = resp.json()["runs"]
+    assert len(runs) == 1
+    assert runs[0]["task_count"] == 3
+    assert runs[0]["task_completed"] == 3
+
+    resp_detail = _get(client, "/admin/babysit/runs/exp-no-tasks-file")
+    assert resp_detail.status_code == 200
+    detail = resp_detail.json()
+    assert len(detail["tasks"]) == 3
+    assert detail["completed_task_ids"] == ["T-201", "T-202", "T-203"]
+    assert all(t["status"] == "completed" for t in detail["tasks"])
+
+
+def test_babysit_empty_and_smoke_run_tags(client, tmp_path, monkeypatch):
+    import app.routers.admin as admin_module
+
+    monkeypatch.setattr(admin_module, "_get_runs_root", lambda: tmp_path)
+    (tmp_path / "exp-empty").mkdir(parents=True)
+    smoke_dir = tmp_path / "smoke-run-01"
+    smoke_dir.mkdir(parents=True)
+    (smoke_dir / "tasks.jsonl").write_text(json.dumps({"task_id": "S-1"}) + "\n", encoding="utf-8")
+
+    resp = _get(client, "/admin/babysit/runs")
+    assert resp.status_code == 200
+    runs = {r["run_id"]: r for r in resp.json()["runs"]}
+    assert runs["exp-empty"]["is_empty"] is True
+    assert runs["exp-empty"]["status_tag"] == "empty"
+    assert "prázdny test" in runs["exp-empty"]["display_label"]
+
+    assert runs["smoke-run-01"]["status_tag"] == "smoke_test"
+    assert "Smoke Test" in runs["smoke-run-01"]["display_label"]
+
+

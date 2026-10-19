@@ -80,22 +80,17 @@ _sse_keepalive_during = sse_keepalive_during  # 实现下沉至 app/core/stream.
 async def _sse_stream_chunks(text: str, completion_id: str, model_name: str, *, fast: bool = False):
     """伪流式切片输出，切片间隔期间也发 keepalive ping。"""
     chunk_delay = 0.0 if fast else 0.03
-    chunk_iter = split_into_chunks(text, delay=chunk_delay).__aiter__()
-    while True:
-        try:
-            word = await asyncio.wait_for(
-                chunk_iter.__anext__(), timeout=_SSE_KEEPALIVE_INTERVAL,
-            )
-        except asyncio.TimeoutError:
+    async for kind, payload in iter_with_keepalive(
+        split_into_chunks(text, delay=chunk_delay), interval=_SSE_KEEPALIVE_INTERVAL
+    ):
+        if kind == "ping":
             yield ": ping\n\n"
-            continue
-        except StopAsyncIteration:
-            break
-        chunk = StreamChunk(
-            id=completion_id, model=model_name,
-            choices=[StreamChoice(delta=StreamDelta(content=word))],
-        )
-        yield format_sse(chunk.model_dump())
+        elif kind == "evt":
+            chunk = StreamChunk(
+                id=completion_id, model=model_name,
+                choices=[StreamChoice(delta=StreamDelta(content=payload))],
+            )
+            yield format_sse(chunk.model_dump())
 
 
 def _images_to_markdown(images: list, request) -> str:
