@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "BabysitFinding",
-  "description": "Schema for findings reported by Monitor observing Argon, proxy, pool, and refresher",
+  "description": "Schema for findings reported by Monitor observing Argon, proxy, pool, refresher, and semantic invariants",
   "type": "object",
   "required": [
     "finding_id",
@@ -25,9 +25,28 @@
         "proxy",
         "pool_cookies",
         "refresher_noise",
-        "orchestrator"
+        "orchestrator",
+        "semantic_invariant",
+        "streaming"
       ],
       "description": "Classification category of the finding"
+    },
+    "invariant_type": {
+      "type": "string",
+      "enum": [
+        "leaked_refusal_phrase",
+        "internal_code_interpreter_leak",
+        "prose_refusal_instead_of_tool",
+        "tool_repetition_loop",
+        "artifact_missing",
+        "artifact_invalid",
+        "stream_chunk_stall",
+        "early_stream_refusal_leak",
+        "stream_error",
+        "substitution_detected",
+        "none"
+      ],
+      "description": "Deterministic semantic invariant classification"
     },
     "severity": {
       "type": "string",
@@ -59,11 +78,11 @@
         },
         "quoted_log": {
           "type": "string",
-          "description": "Verbatim quote from proxy log, timeline, or refresher log"
+          "description": "Verbatim quote from proxy log, timeline, agent response, or refresher log"
         },
         "metric_name": {
           "type": "string",
-          "description": "Optional metric key (e.g. ttft_ms, error_class, max_inter_chunk_gap_ms)"
+          "description": "Optional metric key (e.g. ttft_ms, error_class, max_inter_chunk_gap_ms, repetitions)"
         },
         "metric_value": {
           "description": "Observed metric value"
@@ -71,9 +90,13 @@
         "task_id": {
           "type": "string",
           "description": "Task ID associated with this finding, if applicable"
+        },
+        "snippet": {
+          "type": "string",
+          "description": "Code or text snippet illustrating the failure"
         }
       },
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "root_cause_hypothesis": {
       "type": "string",
@@ -86,7 +109,11 @@
     "created_at": {
       "type": "string",
       "description": "ISO-8601 UTC timestamp when finding was authored"
+    },
+    "task_id": {
+      "type": "string",
+      "description": "Optional root-level task ID reference"
     }
   },
-  "additionalProperties": false
+  "additionalProperties": true
 }

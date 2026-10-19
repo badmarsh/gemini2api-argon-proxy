@@ -234,6 +234,10 @@ class BabysitCollector:
         all_ttft = [float(r.get("ttft_ms") or 0) for r in new_debug if r.get("ttft_ms")]
         stalls = [r for r in new_debug if float(r.get("ttft_ms") or 0) > 120_000.0 or r.get("error_class") == "upstream_timeout"]
         substitutions = [r for r in new_debug if r.get("substitution_suspected")]
+        streaming_requests = [r for r in new_debug if r.get("stream")]
+        responses_requests = [r for r in new_debug if "/responses" in str(r.get("path", ""))]
+        stream_gap_stalls = [r for r in new_debug if float(r.get("max_inter_chunk_gap_ms") or 0) > 15_000.0]
+        parser_issues = [r for r in new_debug if r.get("error_class") in ("tool_json_invalid", "web_error_text")]
 
         stats = {
             "ts": datetime.now(timezone.utc).isoformat(),
@@ -244,6 +248,12 @@ class BabysitCollector:
             "pool_total": pool_status["total"],
             "new_stalls": len(stalls),
             "new_substitutions": len(substitutions),
+            "avg_ttft_ms": round(sum(all_ttft) / len(all_ttft), 2) if all_ttft else 0.0,
+            "max_ttft_ms": round(max(all_ttft), 2) if all_ttft else 0.0,
+            "streaming_requests_count": len(streaming_requests),
+            "responses_requests_count": len(responses_requests),
+            "stream_gap_stalls_count": len(stream_gap_stalls),
+            "parser_issues_count": len(parser_issues),
         }
 
         with open(self.metrics_file, "a", encoding="utf-8") as f:
