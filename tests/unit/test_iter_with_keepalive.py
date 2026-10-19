@@ -83,4 +83,13 @@ def test_interval_none_resolves_module_constant_at_call_time(monkeypatch):
 
 def test_constants():
     assert SSE_KEEPALIVE_FRAME == ": ping\n\n"
-    assert SSE_KEEPALIVE_INTERVAL == 10.0
+    assert SSE_KEEPALIVE_INTERVAL == 3.0
+
+
+def test_default_3s_interval_emits_ping_during_gap(monkeypatch):
+    """With SSE_KEEPALIVE_INTERVAL=3.0s (new default), a 4s upstream silence must produce a ping."""
+    monkeypatch.setattr(stream_mod, "SSE_KEEPALIVE_INTERVAL", 3.0)
+    out = asyncio.run(_collect(iter_with_keepalive(_agen_from(["z"], gap=4.0))))
+    assert ("ping", None) in out   # 4s gap > 3s interval → at least one ping
+    assert ("evt", "z") in out
+

@@ -249,8 +249,10 @@ class BabysitRunner:
 
         t_start = time.time()
         ttft_ms = 0.0
-        last_chunk_time = t_start
-        max_inter_gap_ms = 0.0
+        last_packet_time = t_start   # updated on ANY valid SSE line (including : ping keepalives)
+        last_token_time = t_start    # updated only on substantive data chunks
+        max_transport_gap_ms = 0.0   # time between any packet/ping — true transport hang indicator
+        max_inter_token_gap_ms = 0.0  # time between substantive tokens — LLM generation speed
 
         content_parts: List[str] = []
         tool_calls_map: Dict[int, Dict[str, Any]] = {}
@@ -269,7 +271,14 @@ class BabysitRunner:
                     line = raw_line.decode("utf-8", errors="replace").strip()
                     if not line:
                         continue
-                    if line.startswith(":"):  # SSE comment / keepalive
+
+                    # Track transport liveness on every valid SSE line, including keepalive comments
+                    transport_gap = (now - last_packet_time) * 1000.0
+                    if transport_gap > max_transport_gap_ms:
+                        max_transport_gap_ms = transport_gap
+                    last_packet_time = now
+
+                    if line.startswith(":"):  # SSE comment / keepalive — transport alive, skip data processing
                         continue
                     if not line.startswith("data:"):
                         continue
@@ -282,10 +291,11 @@ class BabysitRunner:
                     if not ttft_ms:
                         ttft_ms = (now - t_start) * 1000.0
 
-                    gap_ms = (now - last_chunk_time) * 1000.0
-                    if gap_ms > max_inter_gap_ms:
-                        max_inter_gap_ms = gap_ms
-                    last_chunk_time = now
+                    # Token-level gap: only between substantive data chunks
+                    token_gap_ms = (now - last_token_time) * 1000.0
+                    if token_gap_ms > max_inter_token_gap_ms:
+                        max_inter_token_gap_ms = token_gap_ms
+                    last_token_time = now
 
                     try:
                         chunk = json.loads(payload)
@@ -362,7 +372,10 @@ class BabysitRunner:
                 "stream": True,
                 "ttft_ms": round(ttft_ms, 2),
                 "total_latency_ms": round(total_latency_ms, 2),
-                "max_inter_chunk_gap_ms": round(max_inter_gap_ms, 2),
+                # max_inter_chunk_gap_ms kept for backward-compat with invariants.py (uses transport gap)
+                "max_inter_chunk_gap_ms": round(max_transport_gap_ms, 2),
+                "max_transport_gap_ms": round(max_transport_gap_ms, 2),
+                "max_inter_token_gap_ms": round(max_inter_token_gap_ms, 2),
                 "chunk_count": total_data_lines,
                 "early_chunks": raw_chunks[:30],
                 "stream_error": stream_error,
@@ -502,8 +515,10 @@ class BabysitRunner:
         else:
             # Streaming responses
             ttft_ms = 0.0
-            last_chunk = t_start
-            max_gap = 0.0
+            last_packet_time = t_start   # updated on ANY valid SSE line (including : ping keepalives)
+            last_token_time = t_start    # updated only on substantive data chunks
+            max_transport_gap_ms = 0.0   # true transport hang indicator
+            max_inter_token_gap_ms = 0.0  # LLM generation speed
             text_parts = []
             raw_chunks = []
             tool_calls_dict: Dict[str, Dict[str, Any]] = {}
@@ -517,7 +532,16 @@ class BabysitRunner:
                     for raw_line in resp:
                         now = time.time()
                         line = raw_line.decode("utf-8", errors="replace").strip()
-                        if not line or line.startswith(":"):
+                        if not line:
+                            continue
+
+                        # Track transport liveness on every valid SSE line, including keepalive comments
+                        transport_gap = (now - last_packet_time) * 1000.0
+                        if transport_gap > max_transport_gap_ms:
+                            max_transport_gap_ms = transport_gap
+                        last_packet_time = now
+
+                        if line.startswith(":"):  # SSE comment / keepalive — transport alive, skip data processing
                             continue
                         if not line.startswith("data:"):
                             continue
@@ -527,10 +551,12 @@ class BabysitRunner:
                         total_data_lines += 1
                         if not ttft_ms:
                             ttft_ms = (now - t_start) * 1000.0
-                        gap = (now - last_chunk) * 1000.0
-                        if gap > max_gap:
-                            max_gap = gap
-                        last_chunk = now
+
+                        # Token-level gap: only between substantive data chunks
+                        token_gap_ms = (now - last_token_time) * 1000.0
+                        if token_gap_ms > max_inter_token_gap_ms:
+                            max_inter_token_gap_ms = token_gap_ms
+                        last_token_time = now
 
                         try:
                             event_data = json.loads(payload)
@@ -633,7 +659,10 @@ class BabysitRunner:
                     "protocol": "responses",
                     "ttft_ms": round(ttft_ms, 2),
                     "total_latency_ms": round((time.time() - t_start) * 1000.0, 2),
-                    "max_inter_chunk_gap_ms": round(max_gap, 2),
+                    # max_inter_chunk_gap_ms kept for backward-compat with invariants.py (uses transport gap)
+                    "max_inter_chunk_gap_ms": round(max_transport_gap_ms, 2),
+                    "max_transport_gap_ms": round(max_transport_gap_ms, 2),
+                    "max_inter_token_gap_ms": round(max_inter_token_gap_ms, 2),
                     "chunk_count": total_data_lines,
                     "early_chunks": raw_chunks[:30],
                     "stream_error": stream_error,

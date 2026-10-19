@@ -18,7 +18,7 @@ def format_sse(data: dict | str) -> str:
     return f"data: {data}\n\n"
 
 
-SSE_KEEPALIVE_INTERVAL: float = 10.0
+SSE_KEEPALIVE_INTERVAL: float = 3.0
 SSE_KEEPALIVE_FRAME: str = ": ping\n\n"
 
 

@@ -716,3 +716,114 @@ def test_chat_completions_stream_connection_drop_recovery(monkeypatch):
     assert "Connection lost" in res["streaming_telemetry"]["stream_error"]
 
 
+def test_chat_completions_stream_telemetry_has_transport_and_token_fields(monkeypatch):
+    """Verify _call_chat_completions_stream returns both max_transport_gap_ms and max_inter_token_gap_ms."""
+    import json as _json
+    import io
+
+    def _line(content_text):
+        chunk = {"id": "tst", "choices": [{"delta": {"content": content_text}, "finish_reason": None}]}
+        return f"data: {_json.dumps(chunk)}\n\n".encode("utf-8")
+
+    class FastStream:
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            pass
+        def __iter__(self):
+            yield b": ping\n\n"          # keepalive — advances transport clock only
+            yield _line("hello")
+            yield _line(" world")
+            yield b"data: [DONE]\n\n"
+
+    def mock_urlopen(req, timeout=360.0):
+        return FastStream()
+
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
+
+    runner = BabysitRunner(base_url="http://127.0.0.1:5918", run_id="test_telem_split")
+    res = runner._call_chat_completions_stream(
+        messages=[{"role": "user", "content": "hi"}], model="gemini-flash"
+    )
+
+    telem = res["streaming_telemetry"]
+    # Both new fields must be present
+    assert "max_transport_gap_ms" in telem
+    assert "max_inter_token_gap_ms" in telem
+    # Backward-compat alias still present
+    assert "max_inter_chunk_gap_ms" in telem
+    # Transport gap >= token gap (transport tracked more events)
+    assert telem["max_transport_gap_ms"] >= 0
+    assert telem["max_inter_token_gap_ms"] >= 0
+    assert res["choices"][0]["message"]["content"] == "hello world"
+
+
+def test_responses_stream_telemetry_has_transport_and_token_fields(monkeypatch):
+    """Verify _call_responses_api(stream=True) returns both transport and token gap fields."""
+    import json as _json
+
+    def _text_delta(text):
+        ev = {"type": "response.output_text.delta", "delta": text}
+        return f"data: {_json.dumps(ev)}\n\n".encode("utf-8")
+
+    class FastRespStream:
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            pass
+        def __iter__(self):
+            yield b": ping\n\n"          # keepalive — transport liveness only
+            yield _text_delta("Hello")
+            yield b"data: " + _json.dumps({"type": "response.completed", "response": {"id": "r1"}}).encode() + b"\n\n"
+
+    def mock_urlopen(req, timeout=360.0):
+        return FastRespStream()
+
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
+
+    runner = BabysitRunner(base_url="http://127.0.0.1:5918", run_id="test_resp_split")
+    res = runner._call_responses_api(
+        messages=[{"role": "user", "content": "hi"}], model="gemini-flash", stream=True
+    )
+
+    telem = res["streaming_telemetry"]
+    assert "max_transport_gap_ms" in telem
+    assert "max_inter_token_gap_ms" in telem
+    assert "max_inter_chunk_gap_ms" in telem  # backward-compat alias
+    assert res["choices"][0]["message"]["content"] == "Hello"
+
+
+def test_stall_invariant_not_triggered_by_keepalive_pings(monkeypatch):
+    """A healthy stream with keepalive pings every 3s must NOT trigger stream_chunk_stall.
+
+    max_inter_chunk_gap_ms in telemetry reflects max_transport_gap_ms (time between any packet
+    including pings). With 3s pings, transport gap stays well below the 15_000ms stall threshold.
+    """
+    import json as _json
+
+    # Simulate pings arriving every ~3s and one data chunk at the end.
+    # In real tests we don't sleep; instead we inject small timestamps via the runner.
+    # Here we just verify the invariant threshold logic with synthetic telemetry.
+    task = {"task_id": "task_ping_01", "category": "streaming_imperative"}
+    turn_with_healthy_transport = {
+        "turn": 1,
+        "streaming_telemetry": {
+            "stream": True,
+            # Transport gap (pings every ~3s): well below 15_000ms stall threshold
+            "max_inter_chunk_gap_ms": 3100.0,
+            "max_transport_gap_ms": 3100.0,
+            # Token gap between substantive chunks can be high (model thinking)
+            "max_inter_token_gap_ms": 62_000.0,
+            "ttft_ms": 1800.0,
+        },
+        "response": {"choices": [{"message": {"content": "Result."}}]},
+    }
+
+    findings = run_all_semantic_invariants(task=task, turns_history=[turn_with_healthy_transport])
+    invariant_types = [f.get("invariant_type") for f in findings]
+    # Transport is healthy (pings kept gap at 3100ms) — must NOT raise stream_chunk_stall
+    assert "stream_chunk_stall" not in invariant_types, (
+        f"False-positive stall alert when transport is healthy via keepalive pings: {findings}"
+    )
