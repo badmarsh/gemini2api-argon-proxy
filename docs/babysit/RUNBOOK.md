@@ -56,7 +56,7 @@ The collector will:
 
 ## 3. Running the Experiment
 
-The runner executes tasks sequentially (concurrency 1) using the orchestrator prompt and monitor prompt:
+The runner executes tasks sequentially (concurrency 30) using the orchestrator prompt and monitor prompt:
 - Tasks are appended to `runs/<run-id>/tasks.jsonl`.
 - Agent interaction traces are captured in `runs/<run-id>/argon_trace.jsonl`.
 - Monitor evaluates each turn and writes verified findings to `runs/<run-id>/findings.jsonl`.
