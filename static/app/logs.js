@@ -12,7 +12,7 @@ import { openPayloadInspector } from './payload-inspector.js';
 
 let pollTimer = null;
 let currentDirection = 'all';
-let currentTrafficType = 'ai';
+let currentTrafficType = 'completions';
 let currentSearch = '';
 let currentOffset = 0;
 const PAGE_SIZE = APP_CONSTANTS.LIMITS.PAGE_SIZE_LOGS;
@@ -180,6 +180,9 @@ export async function loadLogs(resetCircuitBreaker = true) {
         if (currentDirection !== 'all') {
             url += '&direction=' + encodeURIComponent(currentDirection);
         }
+        if (currentTrafficType && currentTrafficType !== 'all') {
+            url += '&traffic_type=' + encodeURIComponent(currentTrafficType);
+        }
         if (currentSearch) {
             url += '&search=' + encodeURIComponent(currentSearch);
         }
@@ -200,12 +203,15 @@ export async function loadLogs(resetCircuitBreaker = true) {
         const records = data.records || [];
         clientLogBuffer.pushMany(records);
 
-        const displayedRecords = currentTrafficType === 'ai'
-            ? records.filter(isGenerativeAiRecord)
-            : records;
+        let displayedRecords = records;
+        if (currentTrafficType === 'completions') {
+            displayedRecords = records.filter(isCompletionsRecord);
+        } else if (currentTrafficType === 'ai') {
+            displayedRecords = records.filter(isGenerativeAiRecord);
+        }
 
         renderTable(displayedRecords);
-        renderPagination(currentTrafficType === 'ai' ? displayedRecords.length : total, currentOffset);
+        renderPagination(total, currentOffset);
     } catch (e) {
         if (e.name !== 'AbortError') {
             consecutiveErrors++;
@@ -307,6 +313,12 @@ function renderPagination(total, offset) {
     const nextBtn = document.getElementById('log-next-btn');
     if (prevBtn) prevBtn.disabled = offset === 0;
     if (nextBtn) nextBtn.disabled = offset + PAGE_SIZE >= total;
+}
+
+function isCompletionsRecord(r) {
+    if (!r) return false;
+    const p = String(r.path || '').toLowerCase();
+    return p.includes('/completions');
 }
 
 function isGenerativeAiRecord(r) {

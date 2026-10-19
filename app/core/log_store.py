@@ -136,18 +136,52 @@ class LogStore:
             self._id_index[record.id] = record
         self._dirty = True
 
+    @staticmethod
+    def _is_completions_record(r: LogRecord) -> bool:
+        if not r or not r.path:
+            return False
+        return "/completions" in r.path.lower()
+
+    @staticmethod
+    def _is_ai_record(r: LogRecord) -> bool:
+        if not r:
+            return False
+        p = (r.path or "").lower()
+        if any(
+            x in p
+            for x in (
+                "/v1beta/",
+                "/v1/chat/completions",
+                "/v1/messages",
+                "/v1/completions",
+                "/v1/responses",
+                "/v1/embeddings",
+            )
+        ):
+            return True
+        if r.model and "/health" not in p and "/admin/" not in p:
+            return True
+        return False
+
     def query(
         self,
         limit: int = 50,
         offset: int = 0,
         direction: str = "all",
         search: str = "",
+        traffic_type: str = "all",
     ) -> dict:
         with self._lock:
             records = list(reversed(self._buffer))
 
         if direction != "all":
             records = [r for r in records if r.direction == direction]
+
+        tt = (traffic_type or "all").lower()
+        if tt == "completions":
+            records = [r for r in records if self._is_completions_record(r)]
+        elif tt == "ai":
+            records = [r for r in records if self._is_ai_record(r)]
 
         if search:
             records = [r for r in records if r.matches_search(search)]

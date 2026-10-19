@@ -26,9 +26,16 @@ async def list_logs(
     offset: int = Query(default=0, ge=0),
     direction: str = Query(default="all"),
     search: str = Query(default=""),
+    traffic_type: str = Query(default="all"),
 ):
     store = get_store(request)
-    return store.query(limit=limit, offset=offset, direction=direction, search=search)
+    return store.query(
+        limit=limit,
+        offset=offset,
+        direction=direction,
+        search=search,
+        traffic_type=traffic_type,
+    )
 
 
 @router.get("/state")

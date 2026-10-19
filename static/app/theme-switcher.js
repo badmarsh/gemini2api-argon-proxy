@@ -74,11 +74,11 @@ function updateThemeButtonUI(currentThemeId) {
     // Update icon dynamically
     let iconEl = btn.querySelector('i.theme-icon-indicator');
     if (!iconEl) {
-        btn.innerHTML = `<i class="theme-icon-indicator ${curr.icon}"></i><span class="theme-name-badge">${curr.name.split(' ')[0]}</span>`;
+        btn.innerHTML = `<i class="theme-icon-indicator ${curr.icon}"></i>`;
     } else {
         iconEl.className = `theme-icon-indicator ${curr.icon}`;
         const badge = btn.querySelector('.theme-name-badge');
-        if (badge) badge.textContent = curr.name.split(' ')[0];
+        if (badge) badge.remove();
     }
 }
 

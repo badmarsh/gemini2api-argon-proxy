@@ -1,5 +1,5 @@
-import { apiCall } from './auth.js';
-import { showToast, escapeHtml } from './utils.js';
+import { apiCall, getToken } from './auth.js';
+import { showToast, escapeHtml, copyToClipboard } from './utils.js';
 import { t } from './i18n.js';
 
 // Double-quote attribute escaping
@@ -103,6 +103,19 @@ export async function loadAccountsThenGems() {
     }
 }
 
+let currentMappings = {};
+
+function slugify(text) {
+    if (!text) return 'gem';
+    const normalized = text.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const slug = normalized
+        .toLowerCase()
+        .trim()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+    return slug || 'custom';
+}
+
 async function loadGems() {
     if (!currentAccount) return;
     const box = document.getElementById('gem-list-container');
@@ -111,26 +124,32 @@ async function loadGems() {
             apiCall('GET', `/admin/gems?account_id=${encodeURIComponent(currentAccount)}`),
             apiCall('GET', '/admin/gem-mapping'),
         ]);
-        render(gemsResp.gems || [], mapResp.mappings || {});
+        currentMappings = mapResp.mappings || {};
+        render(gemsResp.gems || [], currentMappings);
     } catch (e) {
         box.innerHTML = `<div class="error">${escapeHtml(e.message)}</div>`;
     }
 }
 
 function modelNameForGem(gemId, mappings) {
+    if (!mappings) return '';
     for (const [name, info] of Object.entries(mappings)) {
-        if (info.gem_id === gemId && info.account_id === currentAccount) return name;
+        if (info.gem_id === gemId && (!currentAccount || !info.account_id || info.account_id === currentAccount)) return name;
     }
     return '';
 }
 
 function render(gems, mappings) {
+    currentMappings = mappings || {};
     const box = document.getElementById('gem-list-container');
     if (!gems.length) { box.innerHTML = `<div class="empty">${escapeHtml(t('gems.empty'))}</div>`; return; }
     box.innerHTML = gems.map(g => {
         const modelName = modelNameForGem(g.id, mappings);
         const unexposeBtn = modelName
             ? `<button class="btn btn-sm btn-warning gem-unexpose-btn" data-model="${escapeAttr(modelName)}">${escapeHtml(t('gems.unexpose'))}</button>`
+            : '';
+        const curlBtn = modelName
+            ? `<button class="btn btn-sm btn-outline gem-curl-btn" data-model="${escapeAttr(modelName)}" title="Copy cURL snippet"><i class="fas fa-terminal"></i> cURL</button>`
             : '';
         return `<div class="gem-card" data-id="${escapeAttr(g.id)}">
       <div class="gem-info">
@@ -143,8 +162,10 @@ function render(gems, mappings) {
         ${unexposeBtn}
       </div>
       <div class="gem-actions">
-        <button class="btn btn-sm gem-edit"><i class="fas fa-pen"></i></button>
-        <button class="btn btn-sm btn-danger gem-del"><i class="fas fa-trash"></i></button>
+        <button class="btn btn-sm btn-primary gem-use-btn" title="Use in Playground"><i class="fas fa-play"></i> Use in Playground</button>
+        ${curlBtn}
+        <button class="btn btn-sm gem-edit" title="Edit Gem"><i class="fas fa-pen"></i></button>
+        <button class="btn btn-sm btn-danger gem-del" title="Delete Gem"><i class="fas fa-trash"></i></button>
       </div>
     </div>`;
     }).join('');
@@ -155,8 +176,9 @@ function bindRowEvents(gems) {
     const byId = Object.fromEntries(gems.map(g => [g.id, g]));
     document.querySelectorAll('.gem-card').forEach(card => {
         const id = card.dataset.id;
+        const gem = byId[id];
         card.querySelector('.gem-del')?.addEventListener('click', () => removeGem(id));
-        card.querySelector('.gem-edit')?.addEventListener('click', () => openPanel(byId[id]));
+        card.querySelector('.gem-edit')?.addEventListener('click', () => openPanel(gem));
         card.querySelector('.gem-expose-btn')?.addEventListener('click', () => {
             const name = card.querySelector('.gem-model-name').value.trim();
             exposeGem(id, name);
@@ -165,7 +187,101 @@ function bindRowEvents(gems) {
             const modelName = e.currentTarget.dataset.model;
             unexposeGem(modelName);
         });
+        card.querySelector('.gem-use-btn')?.addEventListener('click', () => useGemInPlayground(gem));
+        card.querySelector('.gem-curl-btn')?.addEventListener('click', (e) => {
+            const model = e.currentTarget.dataset.model;
+            copyGemCurl(model);
+        });
     });
+}
+
+async function copyGemCurl(modelName) {
+    if (!modelName) return;
+    const origin = (window.location.origin && window.location.origin.startsWith('http'))
+        ? window.location.origin
+        : 'http://localhost:5918';
+    const token = getToken() || 'YOUR_API_KEY';
+    const curl = `curl ${origin}/v1/chat/completions \\
+  -H "Content-Type: application/json" \\
+  -H "Authorization: Bearer ${token}" \\
+  -d '{
+    "model": "${modelName}",
+    "messages": [
+      {"role": "user", "content": "Hello!"}
+    ]
+  }'`;
+
+    const ok = await copyToClipboard(curl);
+    if (ok) {
+        showToast(`cURL command for "${modelName}" copied to clipboard!`, 'success');
+    } else {
+        showToast('Failed to copy to clipboard', 'error');
+    }
+}
+
+async function useGemInPlayground(gem) {
+    if (!gem) return;
+    let modelName = modelNameForGem(gem.id, currentMappings);
+    if (!modelName) {
+        const baseSlug = slugify(gem.name);
+        let candidate = 'gem-' + baseSlug;
+        let counter = 1;
+        while (currentMappings[candidate]) {
+            candidate = `gem-${baseSlug}-${counter++}`;
+        }
+        const accountId = currentAccount || document.getElementById('gem-account-select')?.value || '';
+        if (!accountId) {
+            showToast('No active account selected for Gem mapping', 'error');
+            return;
+        }
+        try {
+            await apiCall('POST', '/admin/gem-mapping', {
+                model_name: candidate,
+                gem_id: gem.id,
+                base_model: 'gemini-pro',
+                account_id: accountId
+            });
+            modelName = candidate;
+            await loadGems();
+        } catch (e) {
+            showToast('Failed to map gem model: ' + e.message, 'error');
+            return;
+        }
+    }
+
+    // 1. Navigate to #playground
+    const pgNav = document.querySelector('.nav-item[data-section="playground"]');
+    if (pgNav) {
+        pgNav.click();
+    } else {
+        window.location.hash = 'playground';
+    }
+
+    // 2. Set the #pg-model select to that model name with sync
+    if (window.app && typeof window.app.updatePlaygroundModels === 'function') {
+        await window.app.updatePlaygroundModels(null, modelName);
+    } else {
+        const select = document.getElementById('pg-model');
+        if (select) {
+            let opt = Array.from(select.options).find(o => o.value === modelName);
+            if (!opt) {
+                opt = document.createElement('option');
+                opt.value = modelName;
+                opt.textContent = `💎 ${modelName} (Gem)`;
+                select.appendChild(opt);
+            }
+            select.value = modelName;
+            select.dispatchEvent(new Event('change'));
+        }
+    }
+
+    // 3. Focus #pg-message
+    const msgInput = document.getElementById('pg-message');
+    if (msgInput) {
+        setTimeout(() => msgInput.focus(), 100);
+    }
+
+    showToast(`Model set to "${modelName}" in Playground`, 'success');
 }
 
 function openPanel(gem) {

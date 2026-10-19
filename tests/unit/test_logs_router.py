@@ -65,6 +65,70 @@ def test_list_logs_pagination_and_filtering(log_client):
     assert data["offset"] == 1
 
 
+def test_list_logs_traffic_type_filter(log_client):
+    client, store = log_client
+    store.clear()
+
+    rec1 = create_log_record(method="POST", path="/v1/chat/completions", direction="ingress", model="gemini-flash", status=200)
+    rec2 = create_log_record(method="POST", path="/v1/completions", direction="ingress", model="gemini-pro", status=200)
+    rec3 = create_log_record(method="POST", path="/v1beta/models/gemini-pro:generateContent", direction="egress", model="gemini-pro", status=200)
+    rec4 = create_log_record(method="GET", path="/admin/status", direction="ingress", status=200)
+    rec5 = create_log_record(method="GET", path="/health", direction="ingress", status=200)
+
+    for r in (rec1, rec2, rec3, rec4, rec5):
+        store.add(r)
+
+    # Default traffic_type=all
+    resp = client.get("/admin/logs", headers=_AUTH)
+    assert resp.status_code == 200
+    assert resp.json()["total"] == 5
+
+    # Filter: completions
+    resp = client.get("/admin/logs?traffic_type=completions", headers=_AUTH)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total"] == 2
+    paths = [r["path"] for r in data["records"]]
+    assert "/v1/chat/completions" in paths
+    assert "/v1/completions" in paths
+    assert "/v1beta/models/gemini-pro:generateContent" not in paths
+
+    # Filter: completions with pagination (limit=1, offset=1)
+    resp = client.get("/admin/logs?traffic_type=completions&limit=1&offset=1", headers=_AUTH)
+    assert resp.status_code == 200
+    page_data = resp.json()
+    assert page_data["total"] == 2
+    assert len(page_data["records"]) == 1
+    assert page_data["limit"] == 1
+    assert page_data["offset"] == 1
+
+    # Filter: completions with direction=ingress
+    resp = client.get("/admin/logs?traffic_type=completions&direction=ingress", headers=_AUTH)
+    assert resp.status_code == 200
+    assert resp.json()["total"] == 2
+
+    # Case-insensitivity test
+    resp = client.get("/admin/logs?traffic_type=COMPLETIONS", headers=_AUTH)
+    assert resp.status_code == 200
+    assert resp.json()["total"] == 2
+
+    # Filter: ai
+    resp = client.get("/admin/logs?traffic_type=ai", headers=_AUTH)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total"] == 3
+    paths = [r["path"] for r in data["records"]]
+    assert "/v1/chat/completions" in paths
+    assert "/v1/completions" in paths
+    assert "/v1beta/models/gemini-pro:generateContent" in paths
+    assert "/admin/status" not in paths
+
+    # Fallback: unknown traffic_type defaults to all
+    resp = client.get("/admin/logs?traffic_type=unknown_type", headers=_AUTH)
+    assert resp.status_code == 200
+    assert resp.json()["total"] == 5
+
+
 def test_search_by_model_path_id_request_id(log_client):
     client, store = log_client
     store.clear()

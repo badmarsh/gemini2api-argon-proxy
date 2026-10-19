@@ -96,8 +96,14 @@
 
 .gem-actions {
     display: flex;
+    align-items: center;
     gap: 0.4rem;
     flex-shrink: 0;
+}
+
+.gem-use-btn,
+.gem-curl-btn {
+    white-space: nowrap;
 }
 
 #gem-account-select {
@@ -205,5 +211,23 @@
     align-self: flex-start;
     font-size: 0.75rem;
     padding: 0.3rem 0.6rem;
+}
+
+@media (max-width: 992px) {
+    .gem-card {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.75rem;
+    }
+    .gem-expose,
+    .gem-actions {
+        width: 100%;
+        justify-content: flex-start;
+        flex-wrap: wrap;
+    }
+    .gem-model-name {
+        flex: 1;
+        min-width: 140px;
+    }
 }
 

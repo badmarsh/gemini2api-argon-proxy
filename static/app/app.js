@@ -149,6 +149,9 @@ async function loadSectionData(sectionId) {
             case 'gems':
                 await loadAccountsThenGems();
                 break;
+            case 'playground':
+                await updatePlaygroundModels();
+                break;
             case 'babysit':
                 await loadBabysit();
                 break;
@@ -605,20 +608,80 @@ function renderModelsList(modelsSet) {
     });
 }
 
-function updatePlaygroundModels(modelsSet) {
+let _lastModelsSet = new Set();
+
+export async function updatePlaygroundModels(modelsSet, preferredModel = null) {
+    if (modelsSet && (modelsSet instanceof Set || Array.isArray(modelsSet))) {
+        _lastModelsSet = new Set(modelsSet);
+    }
     const select = document.getElementById('pg-model');
     if (!select) return;
 
-    const models = Array.from(modelsSet).sort();
-    if (models.length === 0) {
+    let gemMappings = {};
+    try {
+        const resp = await apiCall('GET', '/admin/gem-mapping');
+        if (resp && resp.mappings) {
+            gemMappings = resp.mappings;
+        }
+    } catch (_) {
+        // Gem mapping fetch failure shouldn't prevent standard models from rendering
+    }
+
+    if (_lastModelsSet.size === 0) {
+        try {
+            const data = await apiCall('GET', '/v1/models');
+            if (data && Array.isArray(data.data)) {
+                data.data.forEach(m => {
+                    if (m && m.id && !gemMappings[m.id]) {
+                        _lastModelsSet.add(m.id);
+                    }
+                });
+            }
+        } catch (_) {
+            try {
+                const status = await telemetryService.getAdminStatus();
+                const accounts = status?.accounts || [];
+                accounts.forEach(a => {
+                    if (a.models && Array.isArray(a.models)) {
+                        a.models.forEach(m => _lastModelsSet.add(m));
+                    }
+                });
+            } catch (_) {}
+        }
+    }
+
+    const currentVal = preferredModel || select.value;
+    const baseModels = Array.from(_lastModelsSet || []).filter(m => !gemMappings[m]).sort();
+    const gemNames = Object.keys(gemMappings).sort();
+
+    if (baseModels.length === 0 && gemNames.length === 0 && !currentVal) {
         select.innerHTML = `<option value="">${t('accounts.noModels')}</option>`;
         return;
     }
 
-    // Security: escape model before inserting into option value and text content
-    select.innerHTML = models.map(model =>
-        `<option value="${escapeAttr(model)}">${escapeHtml(model)}</option>`
-    ).join('');
+    let html = '';
+    if (baseModels.length > 0) {
+        html += baseModels.map(model =>
+            `<option value="${escapeAttr(model)}">${escapeHtml(model)}</option>`
+        ).join('');
+    }
+    if (gemNames.length > 0) {
+        html += gemNames.map(name =>
+            `<option value="${escapeAttr(name)}">💎 ${escapeHtml(name)} (Gem)</option>`
+        ).join('');
+    }
+
+    if (currentVal && !baseModels.includes(currentVal) && !gemNames.includes(currentVal)) {
+        const isGem = currentVal.startsWith('gem-') || !!gemMappings[currentVal];
+        const label = isGem ? `💎 ${escapeHtml(currentVal)} (Gem)` : escapeHtml(currentVal);
+        html += `<option value="${escapeAttr(currentVal)}">${label}</option>`;
+    }
+
+    select.innerHTML = html;
+    if (currentVal && Array.from(select.options).some(o => o.value === currentVal)) {
+        select.value = currentVal;
+        select.dispatchEvent(new Event('change'));
+    }
 }
 
 function renderDebugMetrics(summary) {
@@ -2257,6 +2320,7 @@ window.app = {
     sendPlaygroundRequest,
     clearPlayground,
     copyModel,
+    updatePlaygroundModels,
     reloadCurrentSection() {
         const activeSection = document.querySelector('.section.active');
         if (activeSection) {
