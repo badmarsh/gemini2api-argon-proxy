@@ -431,26 +431,44 @@ _IMAGE_GEN_PLACEHOLDER_PREFIX = "http://googleusercontent.com/"
 _IMAGE_GEN_PLACEHOLDER_PREFIX_S = "https://googleusercontent.com/"
 
 # Gemini Web's native code interpreter may expose these UI-only annotations as assistant text. Strip the
-# reference marker and the complete file-tag block at the source so every protocol gets the same clean text.
+# reference marker, sandbox stdout blocks, and file-tag blocks at the source so every protocol gets clean text.
 _CODE_REFERENCE_RE = re.compile(
     r"python\?code_reference(?:&code_event_index=\d+)?", re.IGNORECASE
+)
+_CODE_STDOUT_TAG_RE = re.compile(
+    r"[a-zA-Z0-9_-]*\?code_stdout(?:&code_event_index=\d+)?", re.IGNORECASE
+)
+_CODE_STDOUT_BLOCK_RE = re.compile(
+    r"```[a-zA-Z0-9_-]*\?code_stdout(?:&code_event_index=\d+)?\s*[\r\n].*?```",
+    re.IGNORECASE | re.DOTALL,
 )
 _FILE_TAG_RE = re.compile(r"\[file-tag:\s*[^]\r\n]*\]", re.IGNORECASE)
 _CODE_REFERENCE_START = "python?code_reference"
 _CODE_REFERENCE_QUERY_PREFIX = "python?code_reference&code_event_index="
+_CODE_STDOUT_START = "text?code_stdout"
+_CODE_STDOUT_QUERY_PREFIX = "text?code_stdout&code_event_index="
+_CODE_STDOUT_FENCE_START = "```text?code_stdout"
 _FILE_TAG_START = "[file-tag:"
 _INTERNAL_ARTIFACT_PREFIXES = (
     _CODE_REFERENCE_START,
     _CODE_REFERENCE_QUERY_PREFIX,
+    _CODE_STDOUT_START,
+    _CODE_STDOUT_QUERY_PREFIX,
+    _CODE_STDOUT_FENCE_START,
     _FILE_TAG_START,
 )
 
 
 def strip_google_internal_artifacts(text: str) -> str:
-    """Remove Gemini Web code-interpreter reference and file-tag UI artifacts from assistant text."""
+    """Remove Gemini Web code-interpreter reference, sandbox stdout blocks, and file-tag UI artifacts."""
     if not isinstance(text, str) or not text:
         return text or ""
-    return _FILE_TAG_RE.sub("", _CODE_REFERENCE_RE.sub("", text))
+    # Strip complete code_stdout output fences first
+    text = _CODE_STDOUT_BLOCK_RE.sub("", text)
+    text = _FILE_TAG_RE.sub("", text)
+    text = _CODE_REFERENCE_RE.sub("", text)
+    text = _CODE_STDOUT_TAG_RE.sub("", text)
+    return text
 
 
 def _stable_internal_artifact_prefix(text: str) -> str:
@@ -458,7 +476,8 @@ def _stable_internal_artifact_prefix(text: str) -> str:
 
     StreamGenerate supplies cumulative snapshots. A tag can therefore be split between snapshots; stripping
     only complete matches would leak its first half. Hold a partial marker, an unclosed ``[file-tag: ...``
-    block, or a complete code reference at end-of-snapshot until a delimiter/final snapshot arrives.
+    block, an unclosed ``?code_stdout`` fence, or a complete code reference at end-of-snapshot until a
+    delimiter/final snapshot arrives.
     """
     if not text:
         return ""
@@ -476,6 +495,22 @@ def _stable_internal_artifact_prefix(text: str) -> str:
             break
         search_from = start + len(_FILE_TAG_START)
 
+    # Hold an unclosed code_stdout fence from its opening fence until its closing fence arrives.
+    search_from = 0
+    while True:
+        start = lowered.find("?code_stdout", search_from)
+        if start == -1:
+            break
+        fence_start = text.rfind("```", 0, start)
+        if fence_start != -1 and (start - fence_start) < 20:
+            closing = text.find("```", start)
+            if closing == -1:
+                cut = min(cut, fence_start)
+                break
+            search_from = closing + 3
+        else:
+            search_from = start + len("?code_stdout")
+
     # Hold a trailing partial opening marker (including a query parameter split between upstream frames).
     for marker in _INTERNAL_ARTIFACT_PREFIXES:
         max_len = min(len(marker), len(lowered))
@@ -484,9 +519,12 @@ def _stable_internal_artifact_prefix(text: str) -> str:
                 cut = min(cut, len(lowered) - size)
                 break
 
-    # A fully formed code-reference tag at the very end may still gain another event-index digit. Keep it
-    # until a delimiter or the final snapshot confirms the boundary.
+    # A fully formed code-reference or code-stdout tag at the very end may still gain another event-index digit.
+    # Keep it until a delimiter or the final snapshot confirms the boundary.
     for match in _CODE_REFERENCE_RE.finditer(text):
+        if match.end() == len(text):
+            cut = min(cut, match.start())
+    for match in _CODE_STDOUT_TAG_RE.finditer(text):
         if match.end() == len(text):
             cut = min(cut, match.start())
 

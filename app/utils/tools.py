@@ -363,6 +363,13 @@ def build_tool_prompt(prompt: str, tools: list[dict], tool_choice=None) -> str:
             '{"status": "text", "content": "<your reply>"}\n\n'
         )
 
+    internal_interpreter_rule = (
+        "INTERNAL CODE INTERPRETER FORBIDDEN: You do NOT have a working internal Python sandbox or "
+        "cloud file access. User files and shell tools exist exclusively on the local machine. "
+        "NEVER execute code internally or output internal code interpreter blocks. "
+        "All commands and file operations MUST be executed by emitting a tool_use JSON object.\n"
+    )
+
     execution_rule = ""
     if has_execution_tool:
         execution_rule = (
@@ -383,6 +390,7 @@ def build_tool_prompt(prompt: str, tools: list[dict], tool_choice=None) -> str:
         "2. \"tool_calls\" is ALWAYS a JSON array [ ... ], even for a single call.\n"
         "3. \"arguments\" is a JSON object with the tool's parameters.\n"
         "4. Output ONLY the JSON (a ```json code block is allowed, nothing else).\n"
+        f"{internal_interpreter_rule}\n"
         f"{execution_rule}\n"
         "Example (calling a tool named run with a command argument):\n"
         '{"status": "tool_use", "tool_calls": [{"name": "run", "arguments": {"command": "ls -la"}}]}\n\n'
@@ -688,6 +696,22 @@ def parse_tool_response(text: str, *, diagnostics: MutableMapping | None = None,
                 "truncated_suspected": _looks_truncated_json(text) if isinstance(text, str) else False,
             })
         return {"type": "text", "content": MALFORMED_TOOL_NOTICE}
+
+    # Internal code interpreter defense: If the model attempted to use Google's internal Python
+    # sandbox / code interpreter instead of calling tools, treat it as a malformed tool call.
+    if parsed.get("type") != "tool_calls" and tool_choice != "none":
+        _INTERNAL_EXEC_INDICATORS = ("code_reference", "code_stdout", "code_stderr")
+        if isinstance(text, str) and any(ind in text.lower() for ind in _INTERNAL_EXEC_INDICATORS):
+            if diagnostics is not None:
+                diagnostics.update({
+                    "response_length": len(text),
+                    "failure_class": "internal_code_interpreter_used",
+                    "error": "model used internal code interpreter instead of calling tool",
+                    "repaired": False,
+                    "truncated_suspected": False,
+                })
+            return {"type": "text", "content": MALFORMED_TOOL_NOTICE}
+
     return parsed
 
 
@@ -731,9 +755,24 @@ async def parse_tool_response_with_retry(text: str, regenerate, *, budget=None,
         _publish_parse_diagnostics(local_diagnostics)
         return parsed
 
-    logger.warning("Tool-call JSON is malformed; regenerating once (no truncated-JSON repair)")
+    failure_class = local_diagnostics.get("failure_class")
+    if failure_class == "internal_code_interpreter_used":
+        logger.warning("Model used internal Python code interpreter instead of calling tools; regenerating once with tool directive")
+        nudge = (
+            "\n\n[MANDATORY CORRECTION] You attempted to use an internal code execution environment, which is "
+            "disabled and cannot access user files. All user files exist strictly on the local machine. "
+            "You MUST execute actions using the provided tools by outputting a JSON object EXACTLY like this:\n"
+            '{"status": "tool_use", "tool_calls": [{"name": "<tool_name>", "arguments": {<args>}}]}'
+        )
+    else:
+        logger.warning("Tool-call JSON is malformed; regenerating once (no truncated-JSON repair)")
+        nudge = ""
+
     try:
-        retry_text = await regenerate()
+        try:
+            retry_text = await (regenerate(nudge) if nudge else regenerate())
+        except TypeError:
+            retry_text = await regenerate()
     except Exception as e:
         logger.warning(f"Tool-call retry failed; keeping the first degraded result: {type(e).__name__}")
         _publish_parse_diagnostics(local_diagnostics)
