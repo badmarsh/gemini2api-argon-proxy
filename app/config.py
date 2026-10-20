@@ -12,7 +12,7 @@ from app.utils import atomic_io
 
 logger = logging.getLogger(__name__)
 
-APP_VERSION = "1.7.1"
+APP_VERSION = "1.7.2"
 
 
 def _generate_api_key() -> str:

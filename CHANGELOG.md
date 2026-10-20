@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+## [1.7.2] - 2026-10-20 (badmarsh/gemini2api v1.7.2)
+
 ### Added
 - **Comprehensive console and disconnect regression gates.** Added full key-set parity coverage for all five
   i18n locales, behavioral XSS tests for the Gems, Logs, and Babysit renderers, account quota-card state tests,
@@ -97,6 +99,14 @@ All notable changes to this project will be documented in this file. The format 
 - `POST /admin/restart` flushes the log store before signalling and now answers `501` on Windows, where `os.kill(SIGTERM)` is a hard `TerminateProcess` (no graceful shutdown and nothing starts the service again). The web console's Restart button now passes the required `?confirm=true`; before, it always got `400` and silently did nothing.
 - `.env` rewrites (settings panel, fallback toggle, generated API key) are atomic: a temp file next to `.env` is swapped in with `os.replace`, so a crash can no longer leave a truncated file. A read-only `.env` still fails up front with a permission error, the file mode is kept, and a bind-mounted `.env` that cannot be renamed over falls back to a direct write. A newly created `.env` is now private (0600). The parent directory is fsynced after the swap on POSIX (best effort).
 - The web console's Restart button no longer claims "Restarting service..." when the request failed: it shows the real error and does not start the reload/health polling. `GET /admin/system-info` reports `restart_supported`, and the button is hidden where restart is unsupported (Windows).
+- **`[Tool call: NAME(ARGS)]` text from the model no longer ends the agent turn.** Models sometimes imitate the
+  prompt-history rendering of past calls instead of the JSON envelope; the raw string was returned as a final answer
+  (`finish_reason=stop`), so e.g. Codex Desktop stopped mid-task. A reply made up solely of complete
+  `[Tool call: NAME(JSON)]` blocks is now converted to normal tool calls (arguments decoded with `raw_decode`, so
+  `)`/`]` inside strings are safe). A reply that opens this way but is truncated, has trailing text or non-object
+  arguments is never forwarded: it takes the malformed path and the existing single regeneration runs with a
+  format-correction nudge. Truncated calls are never repaired, and prose that merely mentions the pattern is left
+  untouched.
 
 ---
 

@@ -13,7 +13,7 @@ function deepFreeze(obj) {
 }
 
 export const APP_CONSTANTS = deepFreeze({
-    VERSION: '1.7.1',
+    VERSION: '1.7.2',
     TIMEOUTS: {
         API_DEFAULT: 30000,       // 30s timeout for standard REST
         STREAM_DEFAULT: 180000,   // 180s to first byte for streaming / deep reasoning
