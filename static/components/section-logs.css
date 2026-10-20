@@ -20,9 +20,9 @@
 }
 
 .log-controls .btn-group .btn.active {
-    background: var(--primary-10, rgba(5, 150, 105, 0.1));
-    color: var(--primary-color, #059669);
-    border-color: var(--primary-color, #059669);
+    background: var(--success-10, var(--primary-10, rgba(5, 150, 105, 0.1)));
+    color: var(--success-text, var(--primary-color, #047857));
+    border-color: currentColor;
     font-weight: 600;
 }
 
@@ -76,27 +76,36 @@
 .logs-table-wrap {
     flex: 1;
     min-width: 0;
-    overflow-x: auto;
-    border: 1px solid var(--border-color, #e2e8f0);
+    max-height: min(70vh, 46rem);
+    overflow: auto;
+    overscroll-behavior: contain;
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-gutter: stable both-edges;
+    border: 1px solid var(--border-strong, var(--border-color, #64748b));
     border-radius: var(--radius-xl, 12px);
     background: var(--card-bg, var(--bg-primary, #fff));
 }
 
 .logs-table {
     width: 100%;
-    border-collapse: collapse;
+    min-width: 920px;
+    table-layout: fixed;
+    border-collapse: separate;
+    border-spacing: 0;
     font-size: 0.82rem;
 }
 
 .logs-table thead th {
     position: sticky;
     top: 0;
+    z-index: 2;
     background: var(--bg-tertiary, #f8fafc);
     padding: 0.7rem 0.75rem;
     text-align: left;
-    font-weight: 600;
+    font-weight: 700;
     color: var(--text-secondary);
-    border-bottom: 1px solid var(--border-color, #e2e8f0);
+    border-bottom: 1px solid var(--border-strong, var(--border-color, #64748b));
     white-space: nowrap;
     font-size: 0.75rem;
     text-transform: uppercase;
@@ -113,15 +122,33 @@
 }
 
 .logs-table tbody tr.selected {
-    background: var(--primary-10, rgba(5, 150, 105, 0.1));
-    color: var(--primary-color, #059669);
+    background: var(--success-10, var(--primary-10, rgba(5, 150, 105, 0.1)));
+    color: var(--success-text, var(--text-primary, #047857));
 }
 
 .logs-table tbody td {
     padding: 0.6rem 0.75rem;
-    border-bottom: 1px solid var(--border-color, #e2e8f0);
+    border-bottom: 1px solid var(--border-strong, var(--border-color, #64748b));
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-variant-numeric: tabular-nums;
 }
+
+.logs-table tbody tr:last-child td {
+    border-bottom: 0;
+}
+
+/* Stable column geometry keeps a 100-row page aligned while scrolling. */
+.logs-table th:nth-child(1), .logs-table td:nth-child(1) { width: 8.5rem; }
+.logs-table th:nth-child(2), .logs-table td:nth-child(2) { width: 7.25rem; }
+.logs-table th:nth-child(3), .logs-table td:nth-child(3) { width: 5.5rem; }
+.logs-table th:nth-child(4), .logs-table td:nth-child(4) { width: 16rem; }
+.logs-table th:nth-child(5), .logs-table td:nth-child(5) { width: 5.5rem; }
+.logs-table th:nth-child(6), .logs-table td:nth-child(6),
+.logs-table th:nth-child(7), .logs-table td:nth-child(7) { width: 6rem; }
+.logs-table th:nth-child(8), .logs-table td:nth-child(8) { width: 9rem; }
+.logs-table th:nth-child(9), .logs-table td:nth-child(9) { width: 12rem; }
 
 .badge {
     display: inline-block;
@@ -134,12 +161,12 @@
 
 .badge-ingress {
     background: var(--info-bg);
-    color: var(--info-color);
+    color: var(--info-text, var(--info-color));
 }
 
 .badge-egress {
-    background: var(--primary-10, rgba(5, 150, 105, 0.1));
-    color: var(--primary-color, #059669);
+    background: var(--success-10, var(--primary-10, rgba(5, 150, 105, 0.1)));
+    color: var(--success-text, var(--success-color));
 }
 
 .status-code {
@@ -147,10 +174,10 @@
     font-size: 0.8rem;
 }
 
-.status-2xx { color: var(--success-color); }
-.status-3xx { color: var(--info-color); }
+.status-2xx { color: var(--success-text, var(--success-color)); }
+.status-3xx { color: var(--info-text, var(--info-color)); }
 .status-4xx { color: var(--warning-text, var(--warning-color)); }
-.status-5xx { color: var(--danger-color); }
+.status-5xx { color: var(--danger-text, var(--danger-color)); }
 
 .logs-detail {
     width: 350px;
@@ -211,17 +238,36 @@
     align-items: center;
     justify-content: center;
     gap: 1rem;
-    margin-top: 1rem;
+    width: fit-content;
+    max-width: 100%;
+    margin: 1rem auto 0;
+    padding: 0.45rem 0.65rem;
     font-size: 0.85rem;
+    font-variant-numeric: tabular-nums;
     color: var(--text-secondary, #64748b);
+    background: var(--card-bg, var(--bg-primary, #fff));
+    border: 1px solid var(--border-strong, var(--border-color, #64748b));
+    border-radius: var(--radius-lg, 8px);
+}
+
+.logs-pagination .btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
 }
 
 @media (max-width: 768px) {
     .logs-layout {
         flex-direction: column;
     }
+    .logs-table-wrap {
+        max-height: 65vh;
+    }
     .logs-detail {
         width: 100%;
         max-height: 400px;
+    }
+    .logs-pagination {
+        gap: 0.5rem;
+        width: 100%;
     }
 }

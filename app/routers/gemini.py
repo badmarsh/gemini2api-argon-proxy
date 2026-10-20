@@ -473,11 +473,15 @@ async def stream_generate_content(model: str, req: GeminiRequest, request: Reque
                     yield _chunk(chunk)
         else:
             # === 真流式路径（纯文本）===
+            # Retain the wrapper and close it explicitly.  On an HTTP client disconnect this
+            # cancels/joins the keepalive pump, propagating closure to AccountPool.generate_stream
+            # so its outer finally always returns the account's concurrency slot.
+            stream_events = iter_with_keepalive(
+                argon_fallback.generate_stream(gemini_client, prompt, model, attachments,
+                                               is_argon=is_argon, thinking=force_thinking,
+                                               gem_id=gem_id, account_id=gem_account_id))
             try:
-                async for _kind, evt in iter_with_keepalive(
-                    argon_fallback.generate_stream(gemini_client, prompt, model, attachments,
-                                                   is_argon=is_argon, thinking=force_thinking,
-                                                   gem_id=gem_id, account_id=gem_account_id)):
+                async for _kind, evt in stream_events:
                     if _kind == "ping":
                         # NDJSON blank-line keepalive (SSE ": ping" comment is invalid on this application/json stream)
                         yield "\n"
@@ -513,6 +517,8 @@ async def stream_generate_content(model: str, req: GeminiRequest, request: Reque
                 # 故这里捕获 Exception，与 openai/claude 真流式路径一致，避免击穿生成器
                 yield json.dumps({"error": {"message": str(e), "type": "api_error"}}) + "\n"
                 return
+            finally:
+                await stream_events.aclose()
 
         completion_tokens = estimate_tokens(response_text)
 

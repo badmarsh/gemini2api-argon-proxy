@@ -7,11 +7,11 @@ import { initThemeSwitcher } from './theme-switcher.js';
 import { initAuth, apiCall, logout } from './auth.js';
 import { showToast, formatNumber, getStatusBadge, maskString, copyToClipboard, showConfirm, formatDate } from './utils.js';
 import { initUsageStats, loadUsageStats } from './usage-chart.js';
-import { initLogs, loadLogs } from './logs.js';
+import { initLogs, loadLogs, setLogsPollingActive } from './logs.js';
 import { initSettings, loadSettings } from './settings.js';
 import { initApiKeys, loadApiKeys } from './api-keys.js';
 import { initGems, loadAccountsThenGems } from './gems.js';
-import { initBabysit, loadBabysit } from './babysit.js';
+import { initBabysit, loadBabysit, setBabysitPollingActive } from './babysit.js';
 import { initI18n, t } from './i18n.js';
 import { initLanguageSwitcher } from './language-switcher.js';
 import { APP_CONSTANTS } from './config/constants.js';
@@ -71,6 +71,18 @@ function activateSection(sectionId, updateHash = true) {
 
     if (updateHash) {
         window.location.hash = sectionId;
+    }
+
+    // A single-page navigation must also be a polling lifecycle boundary.  Stop every
+    // hidden section first; each activation function is idempotent, so hashchange + click
+    // cannot stack intervals.
+    setLogsPollingActive(sectionId === 'logs');
+    setBabysitPollingActive(sectionId === 'babysit');
+    if (sectionId === 'dashboard') {
+        startDashboardAutoRefresh();
+    } else {
+        stopDashboardAutoRefresh();
+        stopUptimeTimer();
     }
 
     loadSectionData(sectionId);
@@ -351,10 +363,24 @@ function startDashboardAutoRefresh() {
     }, DASHBOARD_REFRESH_CHECK_MS);
 }
 
+function stopDashboardAutoRefresh() {
+    if (_dashboardRefreshTimer) {
+        clearInterval(_dashboardRefreshTimer);
+        _dashboardRefreshTimer = null;
+    }
+}
+
 let uptimeInterval = null;
 
+function stopUptimeTimer() {
+    if (uptimeInterval) {
+        clearInterval(uptimeInterval);
+        uptimeInterval = null;
+    }
+}
+
 function startUptimeTimer(initialSeconds) {
-    if (uptimeInterval) clearInterval(uptimeInterval);
+    stopUptimeTimer();
     let seconds = initialSeconds;
     function update() {
         const d = Math.floor(seconds / 86400);
@@ -395,7 +421,12 @@ function applySystemInfo(data) {
     const restartBtnEl = document.getElementById('restartBtn');
     if (restartBtnEl) restartBtnEl.style.display = restartButtonVisible(data) ? '' : 'none';
     if (data.uptime_seconds !== undefined) {
-        startUptimeTimer(data.uptime_seconds);
+        const dashboard = document.getElementById('dashboard');
+        // Real section elements always have classList; the fallback keeps compatibility with
+        // lightweight embedded/test DOMs while hidden real sections remain stopped.
+        if (!dashboard || !dashboard.classList || dashboard.classList.contains('active')) {
+            startUptimeTimer(data.uptime_seconds);
+        }
     }
 }
 
@@ -466,33 +497,45 @@ function _accountHealthRow(account) {
             </div>`;
 }
 
-// Render quota / cooldown status row for accounts page
+// Render quota / cooldown status row for accounts page.  Every dynamic value is escaped
+// because this string is inserted with innerHTML by both account-card renderers.
 function _accountQuotaRow(account) {
     if (!account) return '';
-    const cooldown = Number(account.cooldown_remaining_s) || 0;
+    const cooldown = Math.max(0, Number(account.cooldown_remaining_s) || 0);
     const isCooling = account.cooling_down || cooldown > 0;
-    const activeReqs = Number(account.active_requests) || 0;
+    const activeReqs = Math.max(0, Number(account.active_requests) || 0);
 
-    let quotaBadge = '';
+    let badgeClass;
+    let iconClass;
+    let badgeText;
     if (isCooling) {
-        quotaBadge = `<span class="badge badge-warning" style="font-size:0.75rem;padding:0.2rem 0.5rem;"><i class="fas fa-hourglass-half"></i> Cooldown (${Math.round(cooldown)}s)</span>`;
+        badgeClass = 'badge-warning';
+        iconClass = 'fa-hourglass-half';
+        badgeText = `${t('accounts.quotaCooldown')} (${Math.round(cooldown)}s)`;
     } else if (account.is_healthy === false || account.status === 'expired') {
-        quotaBadge = `<span class="badge badge-danger" style="font-size:0.75rem;padding:0.2rem 0.5rem;"><i class="fas fa-exclamation-triangle"></i> Session Expired</span>`;
+        badgeClass = 'badge-danger';
+        iconClass = 'fa-exclamation-triangle';
+        badgeText = t('accounts.quotaSessionExpired');
     } else if (account.status === 'disabled') {
-        quotaBadge = `<span class="badge badge-secondary" style="font-size:0.75rem;padding:0.2rem 0.5rem;"><i class="fas fa-ban"></i> Disabled</span>`;
+        badgeClass = 'badge-secondary';
+        iconClass = 'fa-ban';
+        badgeText = t('accounts.quotaDisabled');
     } else {
-        quotaBadge = `<span class="badge badge-success" style="font-size:0.75rem;padding:0.2rem 0.5rem;"><i class="fas fa-check-circle"></i> Available (${activeReqs} active)</span>`;
+        badgeClass = 'badge-success';
+        iconClass = 'fa-check-circle';
+        badgeText = `${t('accounts.quotaAvailable')} (${activeReqs} ${t('accounts.quotaActive')})`;
     }
 
+    const policyHint = t('accounts.quotaPolicyHint');
     return `
-            <div class="account-detail">
-                <span class="label">Quota / Status</span>
-                <span class="value">${quotaBadge}</span>
+            <div class="account-detail account-detail--quota">
+                <span class="label">${escapeHtml(t('accounts.quotaStatus'))}</span>
+                <span class="value"><span class="badge account-quota-badge ${badgeClass}" role="status"><i class="fas ${iconClass}" aria-hidden="true"></i> ${escapeHtml(badgeText)}</span></span>
             </div>
-            <div class="account-detail">
-                <span class="label">Quota Policy</span>
-                <span class="value text-muted" style="font-size:0.75rem;" title="Google Web accounts operate on dynamic rate limits without numerical token counts emitted by upstream. Cooldown and failover are handled automatically.">
-                    Web Session (Dynamic Rate Limit) <i class="fas fa-info-circle"></i>
+            <div class="account-detail account-detail--quota-policy">
+                <span class="label">${escapeHtml(t('accounts.quotaPolicy'))}</span>
+                <span class="value text-muted account-quota-policy" title="${escapeAttr(policyHint)}">
+                    ${escapeHtml(t('accounts.quotaWebSession'))} <i class="fas fa-info-circle" aria-hidden="true"></i>
                 </span>
             </div>`;
 }
@@ -2123,11 +2166,15 @@ function initEventListeners() {
         if (!btn._bound) {
             btn._bound = true;
             btn.addEventListener('click', () => {
-                snippetTabs.forEach(b => b.classList.remove('active'));
+                snippetTabs.forEach(b => {
+                    b.classList.remove('active');
+                    b.setAttribute('aria-selected', 'false');
+                });
                 btn.classList.add('active');
+                btn.setAttribute('aria-selected', 'true');
                 const targetSnippet = btn.dataset.snippet;
                 document.querySelectorAll('.quick-endpoint-snippet').forEach(s => {
-                    s.style.display = s.id === `snippet-${targetSnippet}` ? 'block' : 'none';
+                    s.hidden = s.id !== `snippet-${targetSnippet}`;
                 });
             });
         }
@@ -2136,14 +2183,25 @@ function initEventListeners() {
     document.querySelectorAll('.snippet-copy-btn').forEach(btn => {
         if (!btn._bound) {
             btn._bound = true;
-            btn.addEventListener('click', () => {
+            btn.addEventListener('click', async () => {
                 const pre = btn.closest('.snippet-code-wrap')?.querySelector('pre');
-                if (pre && pre.textContent) {
-                    navigator.clipboard.writeText(pre.textContent.trim()).then(() => {
-                        const originalHtml = btn.innerHTML;
-                        btn.innerHTML = '<i class="fas fa-check"></i> Copied!';
-                        setTimeout(() => { btn.innerHTML = originalHtml; }, 2000);
-                    });
+                if (!pre || !pre.textContent) return;
+                const icon = btn.querySelector('i');
+                const label = btn.querySelector('span');
+                try {
+                    const copied = await copyToClipboard(pre.textContent.trim());
+                    if (!copied) throw new Error('clipboard unavailable');
+                    if (icon) icon.className = 'fas fa-check';
+                    if (label) label.textContent = t('dashboard.copied');
+                    btn.classList.add('is-copied');
+                    clearTimeout(btn._copyFeedbackTimer);
+                    btn._copyFeedbackTimer = setTimeout(() => {
+                        if (icon) icon.className = 'fas fa-copy';
+                        if (label) label.textContent = t('dashboard.copy');
+                        btn.classList.remove('is-copied');
+                    }, 2000);
+                } catch (error) {
+                    showToast(t('dashboard.copyFailed'), 'error');
                 }
             });
         }
@@ -2338,7 +2396,13 @@ async function initApp() {
     initApiKeys();
     initGems();
     initBabysit();
-    startDashboardAutoRefresh();
+
+    // initNavigation already established the lifecycle; this is an idempotent compatibility
+    // guard for embedded shells that mark the dashboard active during later initialization.
+    const activeSection = document.querySelector('.section.active');
+    if (activeSection && activeSection.id === 'dashboard') {
+        startDashboardAutoRefresh();
+    }
 }
 
 // Expose functions for onclick handlers

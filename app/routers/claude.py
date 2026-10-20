@@ -275,11 +275,15 @@ async def _stream_claude(prompt: str, model: str, has_tools: bool, attachments=N
 
     full_text = ""
     final_images = []
+    # Keep an explicit handle to the wrapper so closing this router generator (Starlette client
+    # disconnect, ConnectionResetError, or direct ``aclose()``) deterministically closes the
+    # account-pool stream.  The pool owns the account lease and releases it in its outer finally.
+    stream_events = iter_with_keepalive(
+        argon_fallback.generate_stream(gemini_client, prompt, model, attachments,
+                                       is_argon=is_argon, thinking=thinking,
+                                       gem_id=gem_id, account_id=account_id))
     try:
-        async for _kind, evt in iter_with_keepalive(
-            argon_fallback.generate_stream(gemini_client, prompt, model, attachments,
-                                           is_argon=is_argon, thinking=thinking,
-                                           gem_id=gem_id, account_id=account_id)):
+        async for _kind, evt in stream_events:
             if _kind == "ping":
                 yield SSE_KEEPALIVE_FRAME
                 continue
@@ -324,6 +328,10 @@ async def _stream_claude(prompt: str, model: str, has_tools: bool, attachments=N
         yield _claude_sse({"type": "content_block_stop", "index": 0})
         yield _claude_sse({"type": "error", "error": {"type": err_type, "message": str(e)}})
         return
+    finally:
+        # ``iter_with_keepalive`` cancels and joins its pump; that cancellation reaches
+        # AccountPool.generate_stream, whose finally returns the concurrency slot.
+        await stream_events.aclose()
 
     if final_images:
         # 生成图片只在 final 事件才知道，此时文字已经流出去了，只能追加一条 delta

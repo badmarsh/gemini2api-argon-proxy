@@ -7,6 +7,9 @@ All notable changes to this project will be documented in this file. The format 
 ## [Unreleased]
 
 ### Added
+- **Comprehensive console and disconnect regression gates.** Added full key-set parity coverage for all five
+  i18n locales, behavioral XSS tests for the Gems, Logs, and Babysit renderers, account quota-card state tests,
+  four-protocol mid-stream disconnect tests, polling-lifecycle guards, and light-theme contrast/layout checks.
 - **Request tagging via `X-G2A-Run` and `X-G2A-Role` headers.** When present, these headers are validated
   against `^[A-Za-z0-9_.:-]+$` (max 64 chars) and recorded in `LogRecord.tags` and the debug metrics store
   (up to 2 tags, e.g. run ID and caller role). Tags are searchable via `/admin/logs` and visible in
@@ -14,6 +17,19 @@ All notable changes to this project will be documented in this file. The format 
   per-agent API keys. Requests without these headers are unaffected.
 
 ### Fixed
+- **Client disconnects no longer strand account concurrency slots.** Claude SSE and native Gemini streaming now
+  explicitly close their keepalive wrappers in outer `finally` blocks, matching the existing OpenAI and Responses
+  lifecycle. Abrupt closure now propagates to the account pool on all four protocols, where the neutral disconnect
+  release returns `active_requests` to zero without penalizing account health.
+- **SPA polling intervals now follow section lifecycle.** Logs, Babysit, dashboard refresh, and dashboard uptime
+  timers are stopped with `clearInterval` when their section is hidden and restarted idempotently when activated;
+  stale aborted log requests can no longer clear a newer poll's `AbortController`.
+- **Admin console two-column and high-volume views polished.** Quick-integration tabs now have equal geometry,
+  accessible tab semantics, bounded code panes, responsive single-column behavior, and success/failure copy
+  feedback. Quota badges wrap cleanly on narrow account cards, while the 100-row Logs view has a bounded scrolling
+  region, sticky aligned headers, stable column widths, and clearer pagination.
+- **Four-theme contrast hardened.** Vercel Light and Supabase Light now use explicit WCAG-AA status text, code
+  colors, and strong table/code borders instead of inheriting washed-out theme values.
 - **Stream protocol drift detection (`saw_frame`).** When Google's stream sends bytes but zero WRB frames
   can be parsed, the stream now logs a warning (without raw body contents), raises `ProtocolDriftError`,
   and classifies the request in diagnostics and metrics as `protocol_drift` instead of silently finishing
@@ -85,6 +101,10 @@ All notable changes to this project will be documented in this file. The format 
 ---
 
 ### Security
+- **Dynamic admin-console markup is now context-safe.** API-derived Gems, structured-log, and Babysit values are
+  escaped for text or attribute context before `innerHTML` insertion; log direction and finding-severity CSS
+  classes are allowlisted. Behavioral hostile-markup tests cover the three renderers, while log detail data keeps
+  credential headers and cookie/API-key fields redacted.
 - `/docs`, `/redoc` and `/openapi.json` are now disabled by default (404). FastAPI serves them without checking the API key, and they listed every route including the admin API. Set `DOCS_ENABLED=true` to bring them back; they stay unauthenticated, so use it for local development only.
 - The uvicorn access log no longer prints `?token=` values or `sk-...` keys from the request path; a logging filter scrubs them before the line is formatted.
 - `POST /admin/api-keys/models` now sends a Gemini key in the `x-goog-api-key` header instead of the `?key=` query string, and no longer echoes upstream exception text (which embedded the request URL) back to the client. Errors report only the HTTP status or the exception type.

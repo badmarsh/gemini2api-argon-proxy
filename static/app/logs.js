@@ -10,6 +10,12 @@ import { APP_CONSTANTS } from './config/constants.js';
 import { RingBuffer } from './services/telemetryService.js';
 import { openPayloadInspector } from './payload-inspector.js';
 
+// Attribute context is kept explicit during security review even though escapeHtml also
+// escapes quotes.  Dynamic values must never be concatenated into an attribute raw.
+function escapeAttr(value) {
+    return escapeHtml(String(value ?? '')).replace(/"/g, '&quot;');
+}
+
 let pollTimer = null;
 let currentDirection = 'all';
 let currentTrafficType = 'completions';
@@ -27,8 +33,16 @@ let consecutiveErrors = 0;
 
 export function initLogs() {
     initLogControls();
-    loadLogs();
-    startPolling();
+}
+
+// SPA lifecycle hook: only the visible logs section owns a polling interval.  Calling this
+// repeatedly is idempotent because startPolling() first clears any previous interval.
+export function setLogsPollingActive(active) {
+    if (active) {
+        startPolling();
+    } else {
+        stopPolling();
+    }
 }
 
 function initLogControls() {
@@ -173,7 +187,8 @@ export async function loadLogs(resetCircuitBreaker = true) {
     if (inFlightController) {
         inFlightController.abort();
     }
-    inFlightController = new AbortController();
+    const controller = new AbortController();
+    inFlightController = controller;
 
     try {
         let url = `${APP_CONSTANTS.ROUTES.ADMIN_LOGS}?limit=${PAGE_SIZE}&offset=${currentOffset}`;
@@ -188,7 +203,7 @@ export async function loadLogs(resetCircuitBreaker = true) {
         }
 
         const data = await apiCall('GET', url, null, {
-            signal: inFlightController.signal,
+            signal: controller.signal,
             timeout: APP_CONSTANTS.TIMEOUTS.API_DEFAULT
         });
 
@@ -217,7 +232,10 @@ export async function loadLogs(resetCircuitBreaker = true) {
             consecutiveErrors++;
         }
     } finally {
-        inFlightController = null;
+        // An older aborted request must not erase the controller for a newer poll.
+        if (inFlightController === controller) {
+            inFlightController = null;
+        }
     }
 }
 
@@ -244,7 +262,9 @@ function renderTable(records) {
             : r.direction === 'egress'
             ? (t('logs.egress') || 'Egress')
             : (r.direction || '-');
-        const dirClass = 'badge-' + (r.direction || 'ingress');
+        // CSS classes are allowlisted rather than derived from API data.  Escaping is not
+        // sufficient for a token that changes element structure/semantics.
+        const dirClass = r.direction === 'egress' ? 'badge-egress' : 'badge-ingress';
         const statusClass = getStatusClass(r.status);
         const latency = (r.latency_ms !== null && r.latency_ms !== undefined)
             ? Math.round(r.latency_ms) + 'ms'
@@ -258,16 +278,16 @@ function renderTable(records) {
         const fullPath = String(r.path ?? '');
         const fullModel = String(r.model ?? '-');
 
-        return '<tr class="log-row' + selected + '" data-id="' + escapeHtml(String(r.id ?? '')) + '">'
-            + '<td title="' + escapeHtml(fullTime) + '">' + escapeHtml(time) + '</td>'
+        return '<tr class="log-row' + selected + '" data-id="' + escapeAttr(r.id) + '">'
+            + '<td title="' + escapeAttr(fullTime) + '">' + escapeHtml(time) + '</td>'
             + '<td><span class="badge ' + dirClass + '">' + escapeHtml(dirLabel) + '</span></td>'
             + '<td>' + escapeHtml(String(r.method ?? '')) + '</td>'
-            + '<td title="' + escapeHtml(fullPath) + '">' + escapeHtml(truncatePath(r.path)) + '</td>'
+            + '<td title="' + escapeAttr(fullPath) + '">' + escapeHtml(truncatePath(r.path)) + '</td>'
             + '<td><span class="status-code ' + statusClass + '">' + escapeHtml(String(r.status ?? '-')) + '</span></td>'
             + '<td>' + escapeHtml(latency) + '</td>'
             + '<td>' + escapeHtml(ttft) + '</td>'
-            + '<td title="' + escapeHtml(servedBy) + '">' + escapeHtml(servedBy) + '</td>'
-            + '<td title="' + escapeHtml(fullModel) + '">' + escapeHtml(fullModel) + '</td>'
+            + '<td title="' + escapeAttr(servedBy) + '">' + escapeHtml(servedBy) + '</td>'
+            + '<td title="' + escapeAttr(fullModel) + '">' + escapeHtml(fullModel) + '</td>'
             + '</tr>';
     }).join('');
 
