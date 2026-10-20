@@ -55,6 +55,7 @@ _APP_FUNCS = (
     "_accountHealthNote",
     "_accountEmptyNote",
     "_accountHealthRow",
+    "_accountQuotaRow",
     "_accountEmptyRow",
     "_accountLastErrorText",
     # 仪表盘账号卡新增的运维行与操作按钮（渲染路径的一部分，必须一起切出来）

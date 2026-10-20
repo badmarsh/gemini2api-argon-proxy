@@ -22,7 +22,7 @@ class LogStateUpdate(BaseModel):
 @router.get("")
 async def list_logs(
     request: Request,
-    limit: int = Query(default=50, ge=1, le=200),
+    limit: int = Query(default=100, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     direction: str = Query(default="all"),
     search: str = Query(default=""),

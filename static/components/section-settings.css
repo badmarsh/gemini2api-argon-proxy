@@ -204,3 +204,55 @@
     display: flex;
     gap: 0.5rem;
 }
+
+
+/* Configuration readiness */
+.config-panel {
+    background: var(--bg-primary);
+    padding: 1.5rem;
+    border-radius: var(--radius-xl, 12px);
+    box-shadow: var(--shadow-md, 0 4px 6px -1px rgba(0, 0, 0, 0.1));
+    margin-bottom: 1.5rem;
+    border: 1px solid var(--border-color);
+}
+
+.config-panel .system-info-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+}
+
+.config-panel h3 {
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.config-columns {
+    display: grid;
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    gap: 1.5rem;
+    margin-top: 1rem;
+}
+
+.config-column h4 {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0 0 0.75rem;
+}
+
+.config-column h4 + .slo-metrics + h4 {
+    margin-top: 1rem;
+}
+
+@media (max-width: 768px) {
+    .config-columns {
+        grid-template-columns: 1fr;
+    }
+}

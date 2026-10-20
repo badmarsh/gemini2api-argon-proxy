@@ -24,7 +24,7 @@ def test_list_logs_empty(log_client):
     data = resp.json()
     assert data["total"] == 0
     assert data["records"] == []
-    assert data["limit"] == 50
+    assert data["limit"] == 100
     assert data["offset"] == 0
 
 

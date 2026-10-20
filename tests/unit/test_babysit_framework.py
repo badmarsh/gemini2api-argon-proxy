@@ -302,7 +302,7 @@ def test_multimodal_message_preparation(tmp_path):
     img_path = tmp_path / "test_chart.png"
     img_path.write_bytes(b"\x89PNG\r\n\x1a\nfakeimagebytes")
 
-    runner = BabysitRunner(base_url="http://127.0.0.1:5918", run_id="test_run")
+    runner = BabysitRunner(base_url="http://127.0.0.1:5918", run_id="test_run", runs_dir=tmp_path)
     
     # Message without multimodal
     res1 = runner.prepare_multimodal_message("Inspect file", None, sandbox)
@@ -549,7 +549,7 @@ def test_turn_level_streaming_stall_detected_early():
     assert "Turn 1" in stall_finding["summary"]
 
 
-def test_responses_api_streaming_tool_call_assembly(monkeypatch):
+def test_responses_api_streaming_tool_call_assembly(monkeypatch, tmp_path):
     """Verify _call_responses_api streaming correctly reassembles tool calls and completes cleanly."""
     from app.core.responses_protocol import ResponsesStreamEncoder
     import io
@@ -574,7 +574,7 @@ def test_responses_api_streaming_tool_call_assembly(monkeypatch):
     import urllib.request
     monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
 
-    runner = BabysitRunner(base_url="http://127.0.0.1:5918", run_id="test_resp_stream")
+    runner = BabysitRunner(base_url="http://127.0.0.1:5918", run_id="test_resp_stream", runs_dir=tmp_path)
     result = runner._call_responses_api(
         messages=[{"role": "user", "content": "List files"}],
         model="gemini-4-argon",
@@ -592,7 +592,7 @@ def test_responses_api_streaming_tool_call_assembly(monkeypatch):
     assert result["streaming_telemetry"]["chunk_count"] > 0
 
 
-def test_responses_api_multiturn_message_mapping(monkeypatch):
+def test_responses_api_multiturn_message_mapping(monkeypatch, tmp_path):
     """Verify _call_responses_api maps previous turn tool calls and results to Responses input."""
     captured_body = {}
 
@@ -615,7 +615,7 @@ def test_responses_api_multiturn_message_mapping(monkeypatch):
     import urllib.request
     monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
 
-    runner = BabysitRunner(base_url="http://127.0.0.1:5918", run_id="test_resp_multiturn")
+    runner = BabysitRunner(base_url="http://127.0.0.1:5918", run_id="test_resp_multiturn", runs_dir=tmp_path)
     messages = [
         {"role": "user", "content": "Run calculation"},
         {
@@ -644,7 +644,7 @@ def test_responses_api_multiturn_message_mapping(monkeypatch):
     assert fco_item["output"] == "4"
 
 
-def test_responses_api_multimodal_translation(monkeypatch):
+def test_responses_api_multimodal_translation(monkeypatch, tmp_path):
     """Verify chat-shaped multimodal input is translated to Responses input_text and input_image."""
     captured_body = {}
 
@@ -667,7 +667,7 @@ def test_responses_api_multimodal_translation(monkeypatch):
     import urllib.request
     monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
 
-    runner = BabysitRunner(base_url="http://127.0.0.1:5918", run_id="test_resp_mm")
+    runner = BabysitRunner(base_url="http://127.0.0.1:5918", run_id="test_resp_mm", runs_dir=tmp_path)
     messages = [
         {
             "role": "user",
@@ -688,7 +688,7 @@ def test_responses_api_multimodal_translation(monkeypatch):
     assert parts[1]["image_url"].startswith("data:image/png;base64,")
 
 
-def test_chat_completions_stream_connection_drop_recovery(monkeypatch):
+def test_chat_completions_stream_connection_drop_recovery(monkeypatch, tmp_path):
     """Verify chat completions stream handles mid-stream drop without crashing and captures partial telemetry."""
     class DroppingStream:
         def __enter__(self):
@@ -705,7 +705,7 @@ def test_chat_completions_stream_connection_drop_recovery(monkeypatch):
     import urllib.request
     monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
 
-    runner = BabysitRunner(base_url="http://127.0.0.1:5918", run_id="test_drop")
+    runner = BabysitRunner(base_url="http://127.0.0.1:5918", run_id="test_drop", runs_dir=tmp_path)
     res = runner._call_chat_completions_stream(
         messages=[{"role": "user", "content": "Stream me"}],
         model="gemini-4-argon",
@@ -716,7 +716,7 @@ def test_chat_completions_stream_connection_drop_recovery(monkeypatch):
     assert "Connection lost" in res["streaming_telemetry"]["stream_error"]
 
 
-def test_chat_completions_stream_telemetry_has_transport_and_token_fields(monkeypatch):
+def test_chat_completions_stream_telemetry_has_transport_and_token_fields(monkeypatch, tmp_path):
     """Verify _call_chat_completions_stream returns both max_transport_gap_ms and max_inter_token_gap_ms."""
     import json as _json
     import io
@@ -742,7 +742,7 @@ def test_chat_completions_stream_telemetry_has_transport_and_token_fields(monkey
     import urllib.request
     monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
 
-    runner = BabysitRunner(base_url="http://127.0.0.1:5918", run_id="test_telem_split")
+    runner = BabysitRunner(base_url="http://127.0.0.1:5918", run_id="test_telem_split", runs_dir=tmp_path)
     res = runner._call_chat_completions_stream(
         messages=[{"role": "user", "content": "hi"}], model="gemini-flash"
     )
@@ -759,7 +759,7 @@ def test_chat_completions_stream_telemetry_has_transport_and_token_fields(monkey
     assert res["choices"][0]["message"]["content"] == "hello world"
 
 
-def test_responses_stream_telemetry_has_transport_and_token_fields(monkeypatch):
+def test_responses_stream_telemetry_has_transport_and_token_fields(monkeypatch, tmp_path):
     """Verify _call_responses_api(stream=True) returns both transport and token gap fields."""
     import json as _json
 
@@ -783,7 +783,7 @@ def test_responses_stream_telemetry_has_transport_and_token_fields(monkeypatch):
     import urllib.request
     monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
 
-    runner = BabysitRunner(base_url="http://127.0.0.1:5918", run_id="test_resp_split")
+    runner = BabysitRunner(base_url="http://127.0.0.1:5918", run_id="test_resp_split", runs_dir=tmp_path)
     res = runner._call_responses_api(
         messages=[{"role": "user", "content": "hi"}], model="gemini-flash", stream=True
     )

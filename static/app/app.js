@@ -142,11 +142,15 @@ async function loadSectionData(sectionId) {
                 break;
             case 'settings':
                 await loadSettings();
+                if (typeof loadConfigReadiness === 'function') {
+                    loadConfigReadiness();
+                }
                 break;
             case 'api-keys':
                 await loadApiKeys();
                 break;
             case 'gems':
+                initGems();
                 await loadAccountsThenGems();
                 break;
             case 'playground':
@@ -302,9 +306,6 @@ async function loadDashboard(opts) {
         if (typeof loadRequestExplorerData === 'function') {
             // Fire and forget: a failing explorer must not fail the dashboard.
             loadRequestExplorerData();
-        }
-        if (typeof loadConfigReadiness === 'function') {
-            loadConfigReadiness();
         }
         if (view.sys) applySystemInfo(view.sys);
 
@@ -462,6 +463,37 @@ function _accountHealthRow(account) {
             <div class="account-detail">
                 <span class="label">${t('accounts.health')}</span>
                 <span class="value ${note.cls}">${escapeHtml(note.text)}</span>
+            </div>`;
+}
+
+// Render quota / cooldown status row for accounts page
+function _accountQuotaRow(account) {
+    if (!account) return '';
+    const cooldown = Number(account.cooldown_remaining_s) || 0;
+    const isCooling = account.cooling_down || cooldown > 0;
+    const activeReqs = Number(account.active_requests) || 0;
+
+    let quotaBadge = '';
+    if (isCooling) {
+        quotaBadge = `<span class="badge badge-warning" style="font-size:0.75rem;padding:0.2rem 0.5rem;"><i class="fas fa-hourglass-half"></i> Cooldown (${Math.round(cooldown)}s)</span>`;
+    } else if (account.is_healthy === false || account.status === 'expired') {
+        quotaBadge = `<span class="badge badge-danger" style="font-size:0.75rem;padding:0.2rem 0.5rem;"><i class="fas fa-exclamation-triangle"></i> Session Expired</span>`;
+    } else if (account.status === 'disabled') {
+        quotaBadge = `<span class="badge badge-secondary" style="font-size:0.75rem;padding:0.2rem 0.5rem;"><i class="fas fa-ban"></i> Disabled</span>`;
+    } else {
+        quotaBadge = `<span class="badge badge-success" style="font-size:0.75rem;padding:0.2rem 0.5rem;"><i class="fas fa-check-circle"></i> Available (${activeReqs} active)</span>`;
+    }
+
+    return `
+            <div class="account-detail">
+                <span class="label">Quota / Status</span>
+                <span class="value">${quotaBadge}</span>
+            </div>
+            <div class="account-detail">
+                <span class="label">Quota Policy</span>
+                <span class="value text-muted" style="font-size:0.75rem;" title="Google Web accounts operate on dynamic rate limits without numerical token counts emitted by upstream. Cooldown and failover are handled automatically.">
+                    Web Session (Dynamic Rate Limit) <i class="fas fa-info-circle"></i>
+                </span>
             </div>`;
 }
 
@@ -1029,7 +1061,7 @@ function renderConfigReadiness(report) {
     const issues = (data.validation && Array.isArray(data.validation.issues)) ? data.validation.issues : [];
     const drift = Array.isArray(data.drift) ? data.drift : [];
 
-    const state = (issues.length || drift.length) ? 'degraded' : 'ok';
+    const state = issues.length ? 'degraded' : 'ok';
     const chip = document.getElementById('config-state');
     if (chip) {
         chip.className = sloStateDescriptor(state).className;
@@ -1187,7 +1219,7 @@ async function loadAccounts() {
                     <span class="label">${t('accounts.lastSuccess')}</span>
                     <span class="value">${escapeHtml(formatDate(account.last_success_at))}</span>
                 </div>
-${_accountHealthRow(account)}${_accountEmptyRow(account)}
+${_accountQuotaRow(account)}${_accountHealthRow(account)}${_accountEmptyRow(account)}
                 ${account.last_error ? `
                 <div class="account-detail">
                     <span class="label">${t('accounts.lastError')}</span>

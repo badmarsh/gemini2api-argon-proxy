@@ -29,7 +29,7 @@ export const APP_CONSTANTS = deepFreeze({
         MAX_MESSAGE_LENGTH: 100000,    // Max characters per playground message
         MAX_LABEL_LENGTH: 128,         // Max label length for accounts/keys
         MAX_EFFORT_LENGTH: 32,         // Max reasoning_effort length
-        PAGE_SIZE_LOGS: 15,            // Default logs table page size
+        PAGE_SIZE_LOGS: 100,           // Default logs table page size
         MAX_IMG_PREVIEWS: 5            // Max multimodal images in single message
     },
     MASKING: {

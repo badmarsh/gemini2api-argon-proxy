@@ -13,7 +13,7 @@ import pytest
 
 _ROOT = Path(__file__).resolve().parents[2]
 _I18N_JS = _ROOT / "static" / "app" / "i18n.js"
-_DASH_HTML = _ROOT / "static" / "components" / "section-dashboard.html"
+_SETTINGS_HTML = _ROOT / "static" / "components" / "section-settings.html"
 _LANGS = ("zh-CN", "en-US", "ja-JP", "ko-KR", "zh-TW")
 
 
@@ -185,8 +185,8 @@ def test_all_language_blocks_share_the_same_config_keys():
     assert not drift, drift
 
 
-def test_dashboard_markup_contains_the_config_panel():
-    html = _DASH_HTML.read_text(encoding="utf-8")
+def test_settings_markup_contains_the_config_panel():
+    html = _SETTINGS_HTML.read_text(encoding="utf-8")
     for element_id in ("config-state", "config-rows", "config-features", "config-secrets", "config-issues"):
         assert f'id="{element_id}"' in html, element_id
     assert 'aria-live="polite"' in html

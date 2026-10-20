@@ -213,7 +213,7 @@ function renderHeroBanner(details) {
             statusTextEl.textContent = 'SMOKE TEST (17.10.)';
         } else if (isCompleted) {
             badgeEl.className = 'babysit-status-badge status-completed';
-            statusTextEl.textContent = (details.run_id === '20261019-exp02') ? 'RUN COMPLETED (OVERENÝ)' : 'RUN COMPLETED';
+            statusTextEl.textContent = (details.run_id === '20261020-exp04') ? 'RUN COMPLETED (3S KEEPALIVE)' : (details.run_id === '20261019-exp02') ? 'RUN COMPLETED (OVERENÝ)' : 'RUN COMPLETED';
         } else {
             badgeEl.className = 'babysit-status-badge status-running';
             statusTextEl.textContent = 'RUNNING';

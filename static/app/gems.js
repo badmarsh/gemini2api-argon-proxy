@@ -78,28 +78,61 @@ function renderPresets() {
     });
 }
 
+let _gemsControlsBound = false;
+
 export function initGems() {
     renderPresets();
-    document.getElementById('gem-add-btn')?.addEventListener('click', () => openPanel(null));
-    document.getElementById('gem-cancel')?.addEventListener('click', closePanel);
-    document.getElementById('gem-confirm')?.addEventListener('click', saveGem);
-    document.getElementById('gem-account-select')?.addEventListener('change', (e) => {
-        currentAccount = e.target.value;
-        loadGems();
-    });
+    const addBtn = document.getElementById('gem-add-btn');
+    const cancelBtn = document.getElementById('gem-cancel');
+    const confirmBtn = document.getElementById('gem-confirm');
+    const selectEl = document.getElementById('gem-account-select');
+
+    if (!_gemsControlsBound) {
+        if (addBtn) {
+            addBtn.addEventListener('click', () => openPanel(null));
+        }
+        if (cancelBtn) {
+            cancelBtn.addEventListener('click', closePanel);
+        }
+        if (confirmBtn) {
+            confirmBtn.addEventListener('click', saveGem);
+        }
+        if (selectEl) {
+            selectEl.addEventListener('change', (e) => {
+                currentAccount = e.target.value;
+                loadGems();
+            });
+        }
+        if (addBtn && cancelBtn && confirmBtn && selectEl) {
+            _gemsControlsBound = true;
+        }
+    }
 }
 
 export async function loadAccountsThenGems() {
     try {
-        const data = await apiCall('GET', '/admin/accounts');
         const sel = document.getElementById('gem-account-select');
-        const accounts = data.accounts || [];
+        if (!sel) return;
+        const data = await apiCall('GET', '/admin/accounts');
+        const accounts = (data && Array.isArray(data.accounts)) ? data.accounts : [];
+        if (accounts.length === 0) {
+            sel.innerHTML = `<option value="">${escapeHtml(t('accounts.noAccounts') || 'No Accounts')}</option>`;
+            currentAccount = '';
+            const box = document.getElementById('gem-list-container');
+            if (box) {
+                box.innerHTML = `<div class="empty">${escapeHtml(t('accounts.noAccounts') || 'No accounts available')}</div>`;
+            }
+            return;
+        }
         sel.innerHTML = accounts.map(a =>
             `<option value="${escapeAttr(a.id)}">${escapeHtml(a.label || a.id)}</option>`).join('');
-        currentAccount = accounts[0]?.id || '';
+        if (!currentAccount || !accounts.some(a => a.id === currentAccount)) {
+            currentAccount = accounts[0].id;
+        }
+        sel.value = currentAccount;
         await loadGems();
     } catch (e) {
-        showToast(t('gems.loadFail') + ': ' + e.message, 'error');
+        showToast((t('gems.loadFail') || 'Failed to load gems') + ': ' + e.message, 'error');
     }
 }
 
@@ -285,21 +318,36 @@ async function useGemInPlayground(gem) {
 }
 
 function openPanel(gem) {
+    const panel = document.getElementById('gem-add-panel');
+    if (!panel) return;
     editingGemId = gem ? gem.id : null;
-    document.getElementById('gem-name').value = gem ? gem.name : '';
-    document.getElementById('gem-desc').value = gem ? (gem.description || '') : '';
-    document.getElementById('gem-prompt').value = gem ? (gem.prompt || '') : '';
-    document.getElementById('gem-add-panel').style.display = 'block';
+    const nameEl = document.getElementById('gem-name');
+    const descEl = document.getElementById('gem-desc');
+    const promptEl = document.getElementById('gem-prompt');
+    if (nameEl) nameEl.value = gem ? gem.name : '';
+    if (descEl) descEl.value = gem ? (gem.description || '') : '';
+    if (promptEl) promptEl.value = gem ? (gem.prompt || '') : '';
+    panel.style.display = 'block';
 }
 
-function closePanel() { document.getElementById('gem-add-panel').style.display = 'none'; }
+function closePanel() {
+    const panel = document.getElementById('gem-add-panel');
+    if (panel) panel.style.display = 'none';
+}
 
 async function saveGem() {
+    const nameEl = document.getElementById('gem-name');
+    const descEl = document.getElementById('gem-desc');
+    const promptEl = document.getElementById('gem-prompt');
+    if (!currentAccount) {
+        showToast(t('gems.noAccountSelected') || 'No account selected', 'error');
+        return;
+    }
     const body = {
         account_id: currentAccount,
-        name: document.getElementById('gem-name').value.trim(),
-        description: document.getElementById('gem-desc').value.trim(),
-        prompt: document.getElementById('gem-prompt').value.trim(),
+        name: nameEl ? nameEl.value.trim() : '',
+        description: descEl ? descEl.value.trim() : '',
+        prompt: promptEl ? promptEl.value.trim() : '',
     };
     if (!body.name || !body.prompt) { showToast(t('gems.namePromptRequired'), 'error'); return; }
     try {

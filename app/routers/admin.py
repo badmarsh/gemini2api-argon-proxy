@@ -627,7 +627,7 @@ async def list_babysit_runs():
     global_stop = (Path("STOP_BABYSIT").exists() or (root / "STOP_BABYSIT").exists())
 
     for item in root.iterdir():
-        if not item.is_dir():
+        if not item.is_dir() or item.name.startswith("test_") or item.name.startswith("temp_"):
             continue
         run_id = item.name
         tasks_file = item / "tasks.jsonl"

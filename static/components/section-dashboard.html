@@ -48,36 +48,39 @@
         <div class="system-info-header">
             <h3 id="models-title"><i class="fas fa-cube"></i> <span data-i18n="dashboard.modelList">Available Models & Quick Endpoints</span></h3>
         </div>
-        <div class="models-section">
-            <div class="highlight-note">
-                <i class="fas fa-info-circle"></i>
-                <span data-i18n="dashboard.modelCopyHint">Click model name to copy to clipboard</span>
-            </div>
-            <div class="models-container">
-                <div id="modelsList" class="models-list">
-                    <div class="models-loading">
-                        <i class="fas fa-spinner fa-spin"></i>
-                        <span data-i18n="dashboard.loading">Loading...</span>
+        <div class="models-section models-two-col-layout">
+            <div class="models-col-left">
+                <div class="highlight-note">
+                    <i class="fas fa-info-circle"></i>
+                    <span data-i18n="dashboard.modelCopyHint">Click model name to copy to clipboard</span>
+                </div>
+                <div class="models-container">
+                    <div id="modelsList" class="models-list">
+                        <div class="models-loading">
+                            <i class="fas fa-spinner fa-spin"></i>
+                            <span data-i18n="dashboard.loading">Loading...</span>
+                        </div>
                     </div>
                 </div>
             </div>
 
             <!-- Quick Endpoint Info Tabs -->
-            <div class="quick-endpoints-container">
-                <div class="quick-endpoints-header">
-                    <span class="quick-endpoints-title">
-                        <i class="fas fa-plug"></i> Quick Client Integration
-                    </span>
-                    <div class="btn-group" id="endpoint-snippet-tabs">
-                        <button class="btn btn-sm active" data-snippet="curl-openai">cURL (OpenAI)</button>
-                        <button class="btn btn-sm" data-snippet="py-openai">Python (OpenAI)</button>
-                        <button class="btn btn-sm" data-snippet="curl-gemini">cURL (Gemini)</button>
+            <div class="models-col-right">
+                <div class="quick-endpoints-container">
+                    <div class="quick-endpoints-header">
+                        <span class="quick-endpoints-title">
+                            <i class="fas fa-plug"></i> Quick Client Integration
+                        </span>
+                        <div class="btn-group" id="endpoint-snippet-tabs">
+                            <button class="btn btn-sm active" data-snippet="curl-openai">cURL (OpenAI)</button>
+                            <button class="btn btn-sm" data-snippet="py-openai">Python (OpenAI)</button>
+                            <button class="btn btn-sm" data-snippet="curl-gemini">cURL (Gemini)</button>
+                        </div>
                     </div>
-                </div>
-                <div class="quick-endpoint-snippet" id="snippet-curl-openai">
-                    <div class="snippet-code-wrap">
-                        <button class="btn btn-sm btn-outline snippet-copy-btn"><i class="fas fa-copy"></i> Copy</button>
-                        <pre><code>curl http://localhost:5918/v1/chat/completions \
+                    <div class="quick-endpoint-snippet" id="snippet-curl-openai">
+                        <div class="snippet-code-wrap">
+                            <button class="btn btn-sm btn-outline snippet-copy-btn"><i class="fas fa-copy"></i> Copy</button>
+                            <pre><code>curl http://localhost:5918/v1/chat/completions \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -85,12 +88,12 @@
     "messages": [{"role": "user", "content": "Explain quantum computing in one sentence."}],
     "stream": true
   }'</code></pre>
+                        </div>
                     </div>
-                </div>
-                <div class="quick-endpoint-snippet" id="snippet-py-openai" style="display:none;">
-                    <div class="snippet-code-wrap">
-                        <button class="btn btn-sm btn-outline snippet-copy-btn"><i class="fas fa-copy"></i> Copy</button>
-                        <pre><code>from openai import OpenAI
+                    <div class="quick-endpoint-snippet" id="snippet-py-openai" style="display:none;">
+                        <div class="snippet-code-wrap">
+                            <button class="btn btn-sm btn-outline snippet-copy-btn"><i class="fas fa-copy"></i> Copy</button>
+                            <pre><code>from openai import OpenAI
 
 client = OpenAI(base_url="http://localhost:5918/v1", api_key="YOUR_API_KEY")
 
@@ -99,17 +102,18 @@ response = client.chat.completions.create(
     messages=[{"role": "user", "content": "Explain quantum computing in one sentence."}],
 )
 print(response.choices[0].message.content)</code></pre>
+                        </div>
                     </div>
-                </div>
-                <div class="quick-endpoint-snippet" id="snippet-curl-gemini" style="display:none;">
-                    <div class="snippet-code-wrap">
-                        <button class="btn btn-sm btn-outline snippet-copy-btn"><i class="fas fa-copy"></i> Copy</button>
-                        <pre><code>curl http://localhost:5918/v1beta/models/gemini-4-argon:streamGenerateContent?alt=sse \
+                    <div class="quick-endpoint-snippet" id="snippet-curl-gemini" style="display:none;">
+                        <div class="snippet-code-wrap">
+                            <button class="btn btn-sm btn-outline snippet-copy-btn"><i class="fas fa-copy"></i> Copy</button>
+                            <pre><code>curl http://localhost:5918/v1beta/models/gemini-4-argon:streamGenerateContent?alt=sse \
   -H "x-goog-api-key: YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "contents": [{"parts": [{"text": "Explain quantum computing in one sentence."}]}]
   }'</code></pre>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -233,41 +237,7 @@ print(response.choices[0].message.content)</code></pre>
         </div>
     </section>
 
-    <!-- Configuration readiness -->
-    <section class="config-panel" aria-labelledby="config-title">
-        <div class="system-info-header">
-            <h3 id="config-title"><i class="fas fa-sliders"></i> <span data-i18n="dashboard.configTitle">Configuration readiness</span></h3>
-            <span id="config-state" class="slo-state slo-state--unknown" role="status" aria-live="polite"></span>
-        </div>
-        <p class="debug-metrics-privacy" data-i18n="dashboard.configPrivacy">Effective runtime configuration. Secrets are never rendered.</p>
-        <div class="config-columns">
-            <div class="config-column">
-                <h4 data-i18n="dashboard.configEffective">Effective configuration</h4>
-                <table class="slo-table">
-                    <caption class="sr-only" data-i18n="dashboard.configEffective">Effective configuration</caption>
-                    <thead>
-                        <tr>
-                            <th scope="col" data-i18n="dashboard.configField">Setting</th>
-                            <th scope="col" data-i18n="dashboard.configValue">Value</th>
-                            <th scope="col" data-i18n="dashboard.configSource">Source</th>
-                            <th scope="col" data-i18n="dashboard.configRestart">Restart</th>
-                        </tr>
-                    </thead>
-                    <tbody id="config-rows">
-                        <tr><td colspan="4" class="text-muted" data-i18n="dashboard.configNoData">No data</td></tr>
-                    </tbody>
-                </table>
-            </div>
-            <div class="config-column">
-                <h4 data-i18n="dashboard.configFeatures">Features</h4>
-                <dl class="slo-metrics" id="config-features"></dl>
-                <h4 data-i18n="dashboard.configSecrets">Credentials</h4>
-                <dl class="slo-metrics" id="config-secrets"></dl>
-                <h4 data-i18n="dashboard.configValidation">Validation</h4>
-                <ul class="explorer-markers" id="config-issues"></ul>
-            </div>
-        </div>
-    </section>
+
 
     <!-- System Information Panel -->
     <div class="system-info-panel">
