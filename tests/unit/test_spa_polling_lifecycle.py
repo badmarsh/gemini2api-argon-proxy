@@ -23,6 +23,8 @@ def test_each_interval_has_an_idempotent_clear_interval_path():
     assert "pollTimer = null;" in LOGS
 
     assert "export function setBabysitPollingActive(active)" in BABYSIT
+    assert "isSectionActive = Boolean(active);" in BABYSIT
+    assert "if (isSectionActive && isAutoPollingEnabled)" in BABYSIT
     assert "startPolling() {" in BABYSIT and "stopPolling();" in BABYSIT
     assert "clearInterval(pollTimer);" in BABYSIT
     assert "pollTimer = null;" in BABYSIT

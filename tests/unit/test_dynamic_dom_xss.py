@@ -43,6 +43,41 @@ def _run_node(tmp_path: Path, script_text: str, payload: dict) -> dict:
 
 
 @needs_node
+def test_gems_renderer_resolves_its_own_module_scoped_escape_attr(tmp_path):
+    """Exercise gems.js with its own helper, not a same-named test-harness substitute."""
+    utils = (ROOT / "static/app/utils.js").read_text(encoding="utf-8")
+    gems = (ROOT / "static/app/gems.js").read_text(encoding="utf-8")
+    functions = [
+        _extract_function(utils, "escapeHtml"),
+        _extract_function(gems, "escapeAttr"),
+        _extract_function(gems, "modelNameForGem"),
+        _extract_function(gems, "render"),
+    ]
+    script = "\n".join([
+        "const input = JSON.parse(process.argv[2]);",
+        "function t() { return input.attack; }",
+        "let currentAccount = 'account-1';",
+        "let currentMappings = {};",
+        "function bindRowEvents() {}",
+        "const target = { innerHTML: '' };",
+        "const document = { getElementById() { return target; } };",
+        *functions,
+        "render([input.gem], input.mappings);",
+        "process.stdout.write(JSON.stringify({ html: target.innerHTML }));",
+    ])
+    attack = '\"><img src=x onerror="globalThis.pwned=1">'
+    rendered = _run_node(tmp_path, script, {
+        "attack": attack,
+        "gem": {"id": attack, "name": attack, "description": attack},
+        "mappings": {attack: {"gem_id": attack, "account_id": "account-1"}},
+    })["html"]
+
+    assert attack not in rendered
+    assert "<img src=x" not in rendered
+    assert "&quot;&gt;&lt;img" in rendered
+
+
+@needs_node
 def test_logs_gems_and_babysit_escape_hostile_api_values(tmp_path):
     utils = (ROOT / "static/app/utils.js").read_text(encoding="utf-8")
     logs = (ROOT / "static/app/logs.js").read_text(encoding="utf-8")
@@ -58,7 +93,7 @@ def test_logs_gems_and_babysit_escape_hostile_api_values(tmp_path):
         _extract_function(logs, "getStatusClass"),
         _extract_function(logs, "truncatePath"),
         _extract_function(logs, "renderTable"),
-        # gems.js has its own explicit attribute-context helper.
+        # The dedicated test above covers gems.js's exact lexical helper scope.
         _extract_function(gems, "modelNameForGem"),
         _extract_function(gems, "render"),
         _extract_function(babysit, "getToolMeta"),

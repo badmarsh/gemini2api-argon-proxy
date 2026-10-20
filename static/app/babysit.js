@@ -11,7 +11,11 @@ function escapeAttr(value) {
 }
 
 let pollTimer = null;
-let isPollingActive = true;
+// Two independent gates control the interval: SPA visibility and the operator's toggle.
+// Keep the toggle preference when navigating away so returning does not silently resume a
+// poller that the operator explicitly paused.
+let isSectionActive = false;
+let isAutoPollingEnabled = true;
 let currentRunId = null;
 let currentView = 'experiment';
 let activeTab = 'tasks';
@@ -20,14 +24,19 @@ export function initBabysit() {
     initControls();
 }
 
-// SPA lifecycle hook.  Hidden sections must not retain polling intervals or stack new ones
-// each time the operator returns to the monitor.
-export function setBabysitPollingActive(active) {
-    if (active && isPollingActive) {
+function syncPollingState() {
+    if (isSectionActive && isAutoPollingEnabled) {
         startPolling();
     } else {
         stopPolling();
     }
+}
+
+// SPA lifecycle hook. Hidden sections must not retain polling intervals or stack new ones
+// each time the operator returns to the monitor.
+export function setBabysitPollingActive(active) {
+    isSectionActive = Boolean(active);
+    syncPollingState();
 }
 
 function initControls() {
@@ -57,14 +66,11 @@ function initControls() {
     const pollToggle = document.getElementById('babysit-poll-toggle');
     if (pollToggle) {
         pollToggle.addEventListener('click', () => {
-            isPollingActive = !isPollingActive;
-            if (isPollingActive) {
-                pollToggle.innerHTML = '<i class="fas fa-pause"></i> Auto-poll: Zapnutý';
-                startPolling();
-            } else {
-                pollToggle.innerHTML = '<i class="fas fa-play"></i> Auto-poll: Pozastavený';
-                stopPolling();
-            }
+            isAutoPollingEnabled = !isAutoPollingEnabled;
+            pollToggle.innerHTML = isAutoPollingEnabled
+                ? '<i class="fas fa-pause"></i> Auto-poll: Zapnutý'
+                : '<i class="fas fa-play"></i> Auto-poll: Pozastavený';
+            syncPollingState();
         });
     }
 
@@ -99,7 +105,12 @@ function startPolling() {
     stopPolling();
     pollTimer = setInterval(() => {
         const section = document.getElementById('babysit');
-        if (section && section.classList.contains('active') && isPollingActive && document.visibilityState === 'visible') {
+        if (
+            isSectionActive &&
+            isAutoPollingEnabled &&
+            section?.classList.contains('active') &&
+            document.visibilityState === 'visible'
+        ) {
             if (currentRunId && currentView === 'experiment') {
                 loadRunDetails(currentRunId, true);
             } else if (currentView === 'experiment') {
