@@ -52,6 +52,7 @@ def _extract_function(source: str, name: str) -> str:
 
 _APP_FUNCS = (
     "escapeHtml",
+    "escapeAttr",
     "_accountHealthNote",
     "_accountEmptyNote",
     "_accountHealthRow",
@@ -116,7 +117,6 @@ def _harness() -> str:
         function formatNumber(n) { return String(n); }
         function getStatusBadge(s) { return '<BADGE:' + s + '>'; }
         function maskString(s) { return '<MASK>'; }
-        function escapeAttr(s) { return '<ATTR:' + String(s == null ? '' : s) + '>'; }
         async function apiCall() { return { accounts: _ARGV.accounts }; }
         """)
         + f"const EMPTY_STREAK_THRESHOLD = {threshold.group(1)};\n"
@@ -126,6 +126,7 @@ def _harness() -> str:
         async function main() {
             const out = {
                 healthRow: _ARGV.accounts.map(_accountHealthRow),
+                quotaRow: _ARGV.accounts.map(_accountQuotaRow),
                 emptyRow: _ARGV.accounts.map(_accountEmptyRow),
                 lastErrorText: _ARGV.accounts.map(_accountLastErrorText),
             };
@@ -208,6 +209,82 @@ def test_healthy_account_adds_no_health_row_anywhere(tmp_path):
     assert out["healthRow"][0] == ""
     assert "accounts.health" not in out["grid"]
     assert "accounts.health" not in out["list"]
+
+
+# --------------------------------------------------------------------------
+# Quota / rate-limit badges
+# --------------------------------------------------------------------------
+
+@_needs_node
+def test_quota_row_renders_available_state_with_active_request_count(tmp_path):
+    out = _render(
+        [_acc(active_requests=2)],
+        tmp_path,
+        i18n={
+            "accounts.quotaStatus": "Quota / Status",
+            "accounts.quotaAvailable": "Available",
+            "accounts.quotaActive": "active",
+            "accounts.quotaPolicy": "Quota Policy",
+            "accounts.quotaWebSession": "Web Session (Dynamic Rate Limit)",
+            "accounts.quotaPolicyHint": "Dynamic policy hint",
+        },
+    )
+
+    row = out["quotaRow"][0]
+    assert "badge-success" in row
+    assert "Available (2 active)" in row
+    assert "Quota / Status" in row
+    assert "Web Session (Dynamic Rate Limit)" in row
+    assert "Available (2 active)" in out["list"], "accounts page did not wire in _accountQuotaRow"
+
+
+@_needs_node
+def test_quota_row_renders_cooldown_seconds_ahead_of_other_states(tmp_path):
+    out = _render(
+        [_acc(cooling_down=True, cooldown_remaining_s=12.6, is_healthy=False)],
+        tmp_path,
+        i18n={"accounts.quotaCooldown": "Cooldown"},
+    )
+
+    row = out["quotaRow"][0]
+    assert "badge-warning" in row
+    assert "Cooldown (13s)" in row
+    assert "badge-danger" not in row
+
+
+@_needs_node
+def test_quota_row_renders_expired_or_unhealthy_session_as_error(tmp_path):
+    out = _render(
+        [_acc(status="expired", is_healthy=False)],
+        tmp_path,
+        i18n={"accounts.quotaSessionExpired": "Session Expired"},
+    )
+
+    row = out["quotaRow"][0]
+    assert "badge-danger" in row
+    assert "Session Expired" in row
+    assert "badge-success" not in row
+
+
+@_needs_node
+def test_quota_row_escapes_all_translated_inner_html_values(tmp_path):
+    payload = '<img src=x onerror="alert(1)">'
+    out = _render(
+        [_acc()],
+        tmp_path,
+        i18n={
+            "accounts.quotaStatus": payload,
+            "accounts.quotaAvailable": payload,
+            "accounts.quotaPolicyHint": payload,
+            "accounts.quotaPolicy": payload,
+            "accounts.quotaWebSession": payload,
+        },
+    )
+
+    row = out["quotaRow"][0]
+    assert payload not in row
+    assert "&lt;img" in row
+    assert "&quot;" in row
 
 
 # --------------------------------------------------------------------------

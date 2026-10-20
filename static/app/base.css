@@ -28,6 +28,7 @@
     /* Borders and Dividers */
     --border-color: #e2e8f0;
     --border-hover: #cbd5e1;
+    --border-strong: #64748b;
 
     /* Shadows */
     --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
@@ -104,6 +105,7 @@
 
     --border-color: #262626;
     --border-hover: #404040;
+    --border-strong: #737373;
 
     --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.5);
     --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.6);
@@ -160,11 +162,12 @@
     --card-bg: #ffffff;
 
     --text-primary: #000000;
-    --text-secondary: #666666;
-    --text-tertiary: #888888;
+    --text-secondary: #4d4d4d;
+    --text-tertiary: #595959;
 
     --border-color: #eaeaea;
     --border-hover: #d0d0d0;
+    --border-strong: #686868;
 
     --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
     --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.06);
@@ -173,6 +176,14 @@
     --primary-10: rgba(0, 0, 0, 0.08);
     --primary-20: rgba(0, 0, 0, 0.15);
     --primary-30: rgba(0, 0, 0, 0.25);
+
+    /* AA badge/code colors on light surfaces (all text pairs exceed 4.5:1). */
+    --success-text: #065f46;
+    --warning-text: #92400e;
+    --danger-text: #b91c1c;
+    --info-text: #1d4ed8;
+    --code-bg: #111827;
+    --code-text: #f3f4f6;
     --btn-primary-text: #ffffff;
 }
 
@@ -199,6 +210,7 @@
 
     --border-color: #2e2e2e;
     --border-hover: #404040;
+    --border-strong: #737373;
 
     --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.4);
     --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
@@ -259,6 +271,7 @@
 
     --border-color: #e6e8eb;
     --border-hover: #d2d6dc;
+    --border-strong: #667085;
 
     --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
     --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
@@ -268,6 +281,13 @@
     --primary-20: rgba(62, 207, 142, 0.2);
     --primary-30: rgba(62, 207, 142, 0.3);
 
+    /* AA badge/code colors on light surfaces (all text pairs exceed 4.5:1). */
+    --success-text: #065f46;
+    --warning-text: #92400e;
+    --danger-text: #b91c1c;
+    --info-text: #1d4ed8;
+    --code-bg: #111827;
+    --code-text: #ecfdf5;
     --btn-primary-text: #ffffff;
 }
 

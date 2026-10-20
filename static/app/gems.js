@@ -49,13 +49,13 @@ function renderPresets() {
     grid.innerHTML = GEM_PRESETS.map((p, idx) => `
         <div class="gem-preset-card">
             <div class="gem-preset-top">
-                <div class="gem-preset-icon"><i class="${p.icon}"></i></div>
+                <div class="gem-preset-icon"><i class="${escapeAttr(p.icon)}"></i></div>
                 <div class="gem-preset-info">
                     <h5>${escapeHtml(p.name)}</h5>
                     <p>${escapeHtml(p.description)}</p>
                 </div>
             </div>
-            <button class="btn btn-sm btn-outline gem-preset-use-btn" data-preset-idx="${idx}">
+            <button class="btn btn-sm btn-outline gem-preset-use-btn" data-preset-idx="${escapeAttr(idx)}">
                 <i class="fas fa-magic"></i> Use Template
             </button>
         </div>

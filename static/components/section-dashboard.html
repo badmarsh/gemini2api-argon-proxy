@@ -1,4 +1,4 @@
-<link rel="stylesheet" href="components/section-dashboard.css?v=6">
+<link rel="stylesheet" href="components/section-dashboard.css?v=7">
 <!-- Dashboard Section -->
 <section id="dashboard" class="section active" aria-labelledby="dashboard-title">
     <h2 id="dashboard-title" data-i18n="dashboard.title">System Overview</h2>
@@ -69,17 +69,17 @@
                 <div class="quick-endpoints-container">
                     <div class="quick-endpoints-header">
                         <span class="quick-endpoints-title">
-                            <i class="fas fa-plug"></i> Quick Client Integration
+                            <i class="fas fa-plug"></i> <span id="quick-integration-title" data-i18n="dashboard.quickIntegration">Quick Client Integration</span>
                         </span>
-                        <div class="btn-group" id="endpoint-snippet-tabs">
-                            <button class="btn btn-sm active" data-snippet="curl-openai">cURL (OpenAI)</button>
-                            <button class="btn btn-sm" data-snippet="py-openai">Python (OpenAI)</button>
-                            <button class="btn btn-sm" data-snippet="curl-gemini">cURL (Gemini)</button>
+                        <div class="btn-group" id="endpoint-snippet-tabs" role="tablist" aria-labelledby="quick-integration-title">
+                            <button id="snippet-tab-curl-openai" class="btn btn-sm active" data-snippet="curl-openai" role="tab" aria-selected="true" aria-controls="snippet-curl-openai">cURL (OpenAI)</button>
+                            <button id="snippet-tab-py-openai" class="btn btn-sm" data-snippet="py-openai" role="tab" aria-selected="false" aria-controls="snippet-py-openai">Python (OpenAI)</button>
+                            <button id="snippet-tab-curl-gemini" class="btn btn-sm" data-snippet="curl-gemini" role="tab" aria-selected="false" aria-controls="snippet-curl-gemini">cURL (Gemini)</button>
                         </div>
                     </div>
-                    <div class="quick-endpoint-snippet" id="snippet-curl-openai">
+                    <div class="quick-endpoint-snippet" id="snippet-curl-openai" role="tabpanel" aria-labelledby="snippet-tab-curl-openai">
                         <div class="snippet-code-wrap">
-                            <button class="btn btn-sm btn-outline snippet-copy-btn"><i class="fas fa-copy"></i> Copy</button>
+                            <button class="btn btn-sm btn-outline snippet-copy-btn" type="button" aria-live="polite"><i class="fas fa-copy" aria-hidden="true"></i> <span data-i18n="dashboard.copy">Copy</span></button>
                             <pre><code>curl http://localhost:5918/v1/chat/completions \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
@@ -90,9 +90,9 @@
   }'</code></pre>
                         </div>
                     </div>
-                    <div class="quick-endpoint-snippet" id="snippet-py-openai" style="display:none;">
+                    <div class="quick-endpoint-snippet" id="snippet-py-openai" role="tabpanel" aria-labelledby="snippet-tab-py-openai" hidden>
                         <div class="snippet-code-wrap">
-                            <button class="btn btn-sm btn-outline snippet-copy-btn"><i class="fas fa-copy"></i> Copy</button>
+                            <button class="btn btn-sm btn-outline snippet-copy-btn" type="button" aria-live="polite"><i class="fas fa-copy" aria-hidden="true"></i> <span data-i18n="dashboard.copy">Copy</span></button>
                             <pre><code>from openai import OpenAI
 
 client = OpenAI(base_url="http://localhost:5918/v1", api_key="YOUR_API_KEY")
@@ -104,9 +104,9 @@ response = client.chat.completions.create(
 print(response.choices[0].message.content)</code></pre>
                         </div>
                     </div>
-                    <div class="quick-endpoint-snippet" id="snippet-curl-gemini" style="display:none;">
+                    <div class="quick-endpoint-snippet" id="snippet-curl-gemini" role="tabpanel" aria-labelledby="snippet-tab-curl-gemini" hidden>
                         <div class="snippet-code-wrap">
-                            <button class="btn btn-sm btn-outline snippet-copy-btn"><i class="fas fa-copy"></i> Copy</button>
+                            <button class="btn btn-sm btn-outline snippet-copy-btn" type="button" aria-live="polite"><i class="fas fa-copy" aria-hidden="true"></i> <span data-i18n="dashboard.copy">Copy</span></button>
                             <pre><code>curl http://localhost:5918/v1beta/models/gemini-4-argon:streamGenerateContent?alt=sse \
   -H "x-goog-api-key: YOUR_API_KEY" \
   -H "Content-Type: application/json" \

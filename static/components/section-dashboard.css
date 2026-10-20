@@ -830,6 +830,10 @@
     border-radius: var(--radius-lg);
     padding: 1rem 1.25rem;
     margin-top: 1.25rem;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    overflow: hidden;
 }
 
 .quick-endpoints-header {
@@ -850,23 +854,51 @@
     gap: 0.5rem;
 }
 
+#endpoint-snippet-tabs {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    width: min(100%, 29rem);
+}
+
+#endpoint-snippet-tabs .btn {
+    min-width: 0;
+    min-height: 2.25rem;
+    white-space: normal;
+    line-height: 1.2;
+}
+
+.quick-endpoint-snippet {
+    flex: 1;
+    min-height: 21rem;
+    min-width: 0;
+}
+
+.quick-endpoint-snippet[hidden] {
+    display: none;
+}
+
 .snippet-code-wrap {
     position: relative;
     border-radius: var(--radius-md);
     overflow: hidden;
+    height: 100%;
+    min-width: 0;
 }
 
 .snippet-code-wrap pre {
     background: var(--code-bg, #0d1117);
     color: var(--code-text, #e6edf3);
-    padding: 1rem 1.25rem;
+    padding: 3rem 1.25rem 1rem;
     margin: 0;
+    height: 100%;
+    max-width: 100%;
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
     font-size: 0.8125rem;
     line-height: 1.5;
-    overflow-x: auto;
-    border: 1px solid var(--border-color);
+    overflow: auto;
+    border: 1px solid var(--border-strong, var(--border-color));
     border-radius: var(--radius-md);
+    scrollbar-gutter: stable;
 }
 
 .snippet-copy-btn {
@@ -876,15 +908,40 @@
     font-size: 0.75rem;
     padding: 0.25rem 0.6rem;
     background: var(--bg-primary);
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--border-strong, var(--border-color));
     color: var(--text-secondary);
     border-radius: var(--radius-sm);
     cursor: pointer;
     transition: var(--transition);
 }
 
-.snippet-copy-btn:hover {
+.snippet-copy-btn:hover,
+.snippet-copy-btn:focus-visible {
     color: var(--primary-color);
     border-color: var(--primary-color);
+}
+
+.snippet-copy-btn.is-copied {
+    color: var(--success-text, var(--success-color));
+    border-color: currentColor;
+}
+
+@media (max-width: 560px) {
+    .models-overview-panel {
+        padding: 1rem;
+    }
+
+    .quick-endpoints-container {
+        padding: 0.875rem;
+    }
+
+    #endpoint-snippet-tabs {
+        grid-template-columns: 1fr;
+        width: 100%;
+    }
+
+    .quick-endpoint-snippet {
+        min-height: 18rem;
+    }
 }
 

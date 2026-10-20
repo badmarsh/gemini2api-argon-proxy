@@ -6,6 +6,10 @@
 import { apiCall } from './auth.js';
 import { escapeHtml, showToast, showConfirm } from './utils.js';
 
+function escapeAttr(value) {
+    return escapeHtml(String(value ?? '')).replace(/"/g, '&quot;');
+}
+
 let pollTimer = null;
 let isPollingActive = true;
 let currentRunId = null;
@@ -14,8 +18,16 @@ let activeTab = 'tasks';
 
 export function initBabysit() {
     initControls();
-    loadBabysit();
-    startPolling();
+}
+
+// SPA lifecycle hook.  Hidden sections must not retain polling intervals or stack new ones
+// each time the operator returns to the monitor.
+export function setBabysitPollingActive(active) {
+    if (active && isPollingActive) {
+        startPolling();
+    } else {
+        stopPolling();
+    }
 }
 
 function initControls() {
@@ -136,7 +148,7 @@ export async function loadBabysit(isBackground = false) {
         select.innerHTML = runs.map(r => {
             const isSel = (r.run_id === prevSelection) ? 'selected' : '';
             const label = r.display_label || `${r.run_id} (${r.task_completed}/${r.task_count} úloh)`;
-            return `<option value="${escapeHtml(r.run_id)}" ${isSel}>${escapeHtml(label)}</option>`;
+            return `<option value="${escapeAttr(r.run_id)}" ${isSel}>${escapeHtml(label)}</option>`;
         }).join('');
 
         if (prevSelection && runs.some(r => r.run_id === prevSelection)) {
@@ -286,7 +298,7 @@ function renderTasks(tasks, completedIds = []) {
         const desc = t.prompt || t.description || t.task || 'Bez popisu';
         const catBadge = t.category ? `<span class="inspector-badge badge-status-default" style="font-size:0.75rem; margin-left:0.5rem; text-transform:none;">${escapeHtml(t.category)}</span>` : '';
         const diffBadge = t.difficulty ? `<span class="inspector-badge badge-status-default" style="font-size:0.7rem; opacity:0.8; margin-left:0.25rem;">${escapeHtml(t.difficulty)}</span>` : '';
-        const toolsCount = Array.isArray(t.tools) ? `<span style="margin-left:auto; font-size:0.75rem; color:var(--text-secondary);"><i class="fas fa-wrench"></i> ${t.tools.length} nástrojov</span>` : '';
+        const toolsCount = Array.isArray(t.tools) ? `<span style="margin-left:auto; font-size:0.75rem; color:var(--text-secondary);"><i class="fas fa-wrench"></i> ${escapeHtml(String(t.tools.length))} nástrojov</span>` : '';
         const verifyCmd = t.verification_command ? `<code class="code-inline" style="display:inline-block; margin-top:0.35rem;">$ ${escapeHtml(t.verification_command)}</code>` : '';
 
         let criteriaHtml = '';
@@ -311,7 +323,7 @@ function renderTasks(tasks, completedIds = []) {
                 ${criteriaHtml}
                 <div class="babysit-task-meta">
                     <span><i class="fas fa-fingerprint"></i> ${escapeHtml(t.task_id || '')}</span>
-                    ${t.expected_behavior?.timeout_seconds ? `<span><i class="fas fa-stopwatch"></i> ${t.expected_behavior.timeout_seconds}s timeout</span>` : ''}
+                    ${t.expected_behavior?.timeout_seconds ? `<span><i class="fas fa-stopwatch"></i> ${escapeHtml(String(t.expected_behavior.timeout_seconds))}s timeout</span>` : ''}
                 </div>
             </div>
         `;
@@ -374,13 +386,13 @@ function renderTrace(traceEvents) {
                 if (isError) cardClass = 'turn-error';
                 else if (finishReason === 'stop') cardClass = 'turn-completed';
 
-                const statusBadge = `<span class="turn-status-badge ${isError ? 'status-err' : 'status-2xx'}"><i class="fas ${isError ? 'fa-exclamation-triangle' : 'fa-check'}"></i> ${status} OK</span>`;
+                const statusBadge = `<span class="turn-status-badge ${isError ? 'status-err' : 'status-2xx'}"><i class="fas ${isError ? 'fa-exclamation-triangle' : 'fa-check'}"></i> ${escapeHtml(String(status))} OK</span>`;
 
                 const finishBadge = finishReason === 'tool_calls'
                     ? `<span class="turn-finish-badge finish-tool-calls"><i class="fas fa-wrench"></i> tool_calls</span>`
                     : `<span class="turn-finish-badge finish-stop"><i class="fas fa-check-circle"></i> ${escapeHtml(finishReason)}</span>`;
 
-                const latencyBadge = lat ? `<span class="turn-latency-badge"><i class="fas fa-stopwatch"></i> ${lat}</span>` : '';
+                const latencyBadge = lat ? `<span class="turn-latency-badge"><i class="fas fa-stopwatch"></i> ${escapeHtml(lat)}</span>` : '';
 
                 let thoughtHtml = '';
                 if (choice?.content) {
@@ -414,7 +426,7 @@ function renderTrace(traceEvents) {
 
                     toolCallsHtml = `
                         <div class="babysit-trace-tool-calls">
-                            <div class="babysit-trace-subhead"><i class="fas fa-terminal"></i> Volané nástroje (${toolCalls.length})</div>
+                            <div class="babysit-trace-subhead"><i class="fas fa-terminal"></i> Volané nástroje (${escapeHtml(String(toolCalls.length))})</div>
                             ${toolsList}
                         </div>
                     `;
@@ -433,7 +445,7 @@ function renderTrace(traceEvents) {
                     <div class="babysit-turn-card ${cardClass}">
                         <div class="babysit-turn-header">
                             <div class="babysit-turn-meta-left">
-                                <span class="turn-badge-pill"><i class="fas fa-layer-group"></i> Turn ${turnNum}</span>
+                                <span class="turn-badge-pill"><i class="fas fa-layer-group"></i> Turn ${escapeHtml(String(turnNum))}</span>
                                 ${latencyBadge}
                                 ${finishBadge}
                             </div>
@@ -452,8 +464,8 @@ function renderTrace(traceEvents) {
                         <div class="babysit-trace-task-title">
                             <i class="fas fa-code-branch" style="color:var(--primary-color);"></i>
                             <strong>${escapeHtml(taskId)}</strong>
-                            <span class="inspector-badge badge-status-default" style="font-size:0.75rem;">${e.turns.length} turn${e.turns.length > 1 ? 'y' : ''}</span>
-                            ${totalTime ? `<span class="turn-latency-badge" style="font-size:0.75rem;"><i class="fas fa-clock"></i> ${totalTime}</span>` : ''}
+                            <span class="inspector-badge badge-status-default" style="font-size:0.75rem;">${escapeHtml(String(e.turns.length))} turn${e.turns.length > 1 ? 'y' : ''}</span>
+                            ${totalTime ? `<span class="turn-latency-badge" style="font-size:0.75rem;"><i class="fas fa-clock"></i> ${escapeHtml(totalTime)}</span>` : ''}
                         </div>
                         <span style="font-size:0.75rem; color:var(--text-tertiary); font-family:monospace;">${escapeHtml(e.run_id || '')}</span>
                     </div>
@@ -494,7 +506,10 @@ function renderFindings(findings) {
     }
 
     container.innerHTML = findings.slice().reverse().map(f => {
-        const sev = (f.severity || 'INFO').toUpperCase();
+        const sev = String(f.severity || 'INFO').toUpperCase();
+        const severityCardClass = ['CRITICAL', 'ERROR', 'HIGH', 'WARNING', 'MEDIUM', 'LOW', 'INFO'].includes(sev)
+            ? sev
+            : 'INFO';
         const sevClass = (sev === 'CRITICAL' || sev === 'ERROR') ? 'badge-status-5xx' : (sev === 'WARNING' ? 'badge-status-4xx' : 'badge-status-2xx');
         const title = f.summary || f.title || f.category || 'Pozorovanie';
         const desc = (f.description || f.message || '');
@@ -502,7 +517,7 @@ function renderFindings(findings) {
         const categoryBadge = f.category ? `<span class="babysit-trace-tool-badge" style="font-size:0.75rem;">${escapeHtml(f.category)}</span>` : '';
         const findingId = f.finding_id ? `<span style="font-size:0.75rem; color:var(--text-secondary); margin-left:0.5rem;">${escapeHtml(f.finding_id)}</span>` : '';
         const taskId = f.task_id ? `<span style="font-size:0.75rem; color:var(--text-secondary);"><i class="fas fa-tag"></i> ${escapeHtml(f.task_id)}</span>` : '';
-        const confBadge = (typeof f.confidence === 'number') ? `<span style="font-size:0.75rem; color:var(--text-secondary); margin-left:0.35rem;">(${Math.round(f.confidence * 100)}% conf)</span>` : '';
+        const confBadge = (typeof f.confidence === 'number') ? `<span style="font-size:0.75rem; color:var(--text-secondary); margin-left:0.35rem;">(${escapeHtml(String(Math.round(f.confidence * 100)))}% conf)</span>` : '';
 
         let fixHtml = '';
         const proposedFix = f.proposed_fix || f.recommendation || f.fix;
@@ -538,7 +553,7 @@ function renderFindings(findings) {
         }
 
         return `
-            <div class="babysit-finding-card severity-${escapeHtml(sev)}">
+            <div class="babysit-finding-card severity-${severityCardClass}">
                 <div class="babysit-finding-header">
                     <div style="display:flex; align-items:center; flex-wrap:wrap; gap:0.5rem;">
                         <span class="inspector-badge ${sevClass}">${escapeHtml(sev)}</span>
