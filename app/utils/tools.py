@@ -518,6 +518,58 @@ def _unwrap_text_status_envelope(text: str) -> dict | None:
     return None
 
 
+# Past tool calls are rendered into the flattened prompt history as ``[Tool call: NAME(ARGS_JSON)]``
+# (app/utils/prompt.py). Models sometimes imitate that rendering instead of emitting the JSON envelope the
+# system prompt asks for; unrecognised, the raw string reached the client as a final answer and ended the
+# agent turn.
+_BRACKET_CALL_RE = re.compile(r"\[\s*Tool call:\s*([A-Za-z_][\w.:\-]*)\s*\(")
+
+
+def _skip_ws(s: str, i: int) -> int:
+    while i < len(s) and s[i].isspace():
+        i += 1
+    return i
+
+
+def _parse_bracket_tool_calls(text: str) -> list | None:
+    """Recover calls written as ``[Tool call: NAME(JSON_ARGS)]``; None when the reply is not exactly that.
+
+    Deliberately strict, in the same spirit as the "never repair truncated JSON" rule:
+    * the whole reply must consist of one or more complete calls and nothing else, so prose that merely
+      mentions the pattern is never executed;
+    * the arguments must be one complete JSON object decoded with ``raw_decode`` (not a regex), so ``)``
+      or ``]`` inside JS/shell strings cannot end the call early;
+    * a truncated or otherwise malformed call is rejected, never completed.
+    """
+    s = _strip_code_fence(text)
+    decoder = json.JSONDecoder(strict=False)
+    calls = []
+    i = _skip_ws(s, 0)
+    while i < len(s):
+        m = _BRACKET_CALL_RE.match(s, i)
+        if not m:
+            return None
+        i = _skip_ws(s, m.end())
+        if i < len(s) and s[i] == ")":
+            args = {}
+        else:
+            try:
+                args, i = decoder.raw_decode(s, i)
+            except ValueError:
+                return None
+            i = _skip_ws(s, i)
+            if i >= len(s) or s[i] != ")":
+                return None
+        if not isinstance(args, dict):
+            return None
+        i = _skip_ws(s, i + 1)
+        if i >= len(s) or s[i] != "]":
+            return None
+        i = _skip_ws(s, i + 1)
+        calls.append({"name": m.group(1), "arguments": args})
+    return _normalize_tool_calls(calls)
+
+
 def _try_parse(text: str, diagnostics: MutableMapping | None = None) -> dict | None:
     """Try to parse a tool/text envelope and retain the JSON error for diagnostics."""
     try:
@@ -576,6 +628,34 @@ def _parse_tool_response(text: str, *, diagnostics: MutableMapping | None = None
             "repaired": False,
             "truncated_suspected": False,
         })
+
+    # 0. The reply opens with the history rendering "[Tool call: NAME(ARGS)]" instead of the JSON envelope.
+    # Handled first so that the object scan in step 3 can never mistake the call's *arguments* (which may
+    # themselves contain "name"/"arguments" keys) for the envelope. A complete call is converted; anything
+    # else that opens this way is never forwarded as a final answer - it takes the malformed path so the
+    # caller's single regeneration (with a correction nudge) can fix it.
+    if _BRACKET_CALL_RE.match(_strip_code_fence(text)):
+        bracket_calls = _parse_bracket_tool_calls(text)
+        if bracket_calls:
+            _clean_success(diagnostics, len(text))
+            _set_parse_diagnostic(diagnostics, recovered="bracket_tool_call")
+            logger.warning(
+                "Model emitted '[Tool call: ...]' text instead of the JSON envelope; converted %d call(s) "
+                "(response_length=%d)", len(bracket_calls), len(text)
+            )
+            return {"type": "tool_calls", "tool_calls": bracket_calls}
+        _set_parse_diagnostic(
+            diagnostics,
+            failure_class="bracket_tool_call_unparsed",
+            error="reply starts with a '[Tool call: ...]' rendering that is not a complete, well-formed call",
+            response_length=len(text),
+            truncated_suspected=_looks_truncated_json(text),
+        )
+        logger.warning(
+            "Model emitted an unparseable '[Tool call: ...]' text (response_length=%d); "
+            "it will not be forwarded: %r", len(text), text[:120]
+        )
+        return {"type": "text", "content": MALFORMED_TOOL_NOTICE}
 
     # 1. 直接解析
     r = _try_parse(text, diagnostics)
@@ -762,6 +842,14 @@ async def parse_tool_response_with_retry(text: str, regenerate, *, budget=None,
             "\n\n[MANDATORY CORRECTION] You attempted to use an internal code execution environment, which is "
             "disabled and cannot access user files. All user files exist strictly on the local machine. "
             "You MUST execute actions using the provided tools by outputting a JSON object EXACTLY like this:\n"
+            '{"status": "tool_use", "tool_calls": [{"name": "<tool_name>", "arguments": {<args>}}]}'
+        )
+    elif failure_class == "bracket_tool_call_unparsed":
+        logger.warning("Model wrote a '[Tool call: ...]' rendering that could not be parsed; regenerating once with a format directive")
+        nudge = (
+            "\n\n[MANDATORY CORRECTION] Your previous reply imitated the conversation history "
+            "('[Tool call: NAME(ARGS)]'), which is NOT a valid tool call. Respond with ONLY a JSON object "
+            "EXACTLY like this (no surrounding text):\n"
             '{"status": "tool_use", "tool_calls": [{"name": "<tool_name>", "arguments": {<args>}}]}'
         )
     else:
