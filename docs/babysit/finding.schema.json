@@ -37,6 +37,8 @@
         "leaked_refusal_phrase",
         "internal_code_interpreter_leak",
         "prose_refusal_instead_of_tool",
+        "simulated_code_execution",
+        "unverified_investigation_prose",
         "tool_repetition_loop",
         "artifact_missing",
         "artifact_invalid",

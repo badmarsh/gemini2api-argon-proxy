@@ -130,6 +130,7 @@ class BabysitRunner:
         monitor_model: str = "gemini-flash",
         default_protocol: str = "chat_completions",
         force_stream: Optional[bool] = None,
+        tasks_file: Optional[str | Path] = None,
     ):
         self.base_url = base_url.rstrip("/")
         self.api_key = resolve_api_key(api_key)
@@ -142,7 +143,21 @@ class BabysitRunner:
         self.findings_file = self.run_dir / "findings.jsonl"
         self.completed_file = self.run_dir / "completed_tasks.json"
 
-        self.max_tasks = min(max_tasks, 20)  # Enforce D5 ceiling
+        self.predefined_tasks: List[Dict[str, Any]] = []
+        if tasks_file:
+            tf_path = Path(tasks_file)
+            if tf_path.is_file():
+                for line in tf_path.read_text(encoding="utf-8").splitlines():
+                    if line.strip():
+                        self.predefined_tasks.append(json.loads(line))
+                if self.predefined_tasks:
+                    logger.info(f"Loaded {len(self.predefined_tasks)} predefined tasks from {tf_path}.")
+
+        task_limit = min(max_tasks, 20)  # Enforce D5 ceiling
+        if self.predefined_tasks:
+            self.max_tasks = min(task_limit, len(self.predefined_tasks))
+        else:
+            self.max_tasks = task_limit
         self.orchestrator_model = orchestrator_model
         self.argon_model = argon_model
         self.monitor_model = monitor_model
@@ -751,58 +766,63 @@ class BabysitRunner:
 
         logger.info(f"--- Task {task_idx}/{self.max_tasks} Starting ---")
 
-        # Step 1: Orchestrator generates task
-        categories = [
-            "tool_use",
-            "streaming_imperative",
-            "refusal_stress",
-            "multistep_planning",
-            "responses_protocol",
-            "filesystem",
-            "tool_recovery",
-            "multimodal_vision",
-            "format_constraints",
-        ]
-        cat = categories[(task_idx - 1) % len(categories)]
-        orch_query = (
-            f"Generate exactly 1 synthetic benchmark task for Argon 4 in category '{cat}'.\n"
-            "Output must be a JSON object with top-level key 'task' conforming strictly to task.schema.json.\n"
-            "Requirements:\n"
-            "- task_id (pattern '^task_[0-9a-zA-Z_-]+$')\n"
-            f"- category: '{cat}'\n"
-            "- difficulty ('low'|'medium'|'high'|'extreme')\n"
-            "- title, prompt (use realistic imperative prompt with relative paths like 'data/input.csv' or 'src/app.py')\n"
-            "- initial_files: REQUIRED array of {path, content} for any files referenced in the prompt!\n"
-            "- tools: array of {type:'function', function:{name, description, parameters}}\n"
-            "- expected_behavior: {success_criteria, timeout_seconds>=360, expected_artifacts}\n"
-            "- protocol: 'chat_completions' or 'responses'\n"
-            "- stream: true or false"
-        )
-
         task = None
-        for attempt in range(3):
-            logger.info(f"Orchestrator ({self.orchestrator_model}) generating task for category: {cat} (attempt {attempt + 1}/3)...")
-            try:
-                orch_resp = self._call_chat_completions_nonstream(
-                    messages=[
-                        {"role": "system", "content": self.orch_prompt},
-                        {"role": "user", "content": orch_query},
-                    ],
-                    model=self.orchestrator_model,
-                    role="orchestrator",
-                    timeout=120.0,
-                )
-                content = orch_resp["choices"][0]["message"]["content"]
-                task_data = extract_json(content)
-                task = task_data.get("task", task_data)
-                if isinstance(task, dict) and task.get("title"):
-                    break
-            except Exception as e:
-                logger.warning(f"Orchestrator generation attempt {attempt + 1} failed: {e}")
-                time.sleep(3)
+        if self.predefined_tasks and (task_idx - 1) < len(self.predefined_tasks):
+            task = dict(self.predefined_tasks[task_idx - 1])
+            logger.info(f"Using predefined task {task_idx}: {task.get('task_id')} - '{task.get('title')}'")
+        else:
+            # Step 1: Orchestrator generates task
+            categories = [
+                "investigation",
+                "tool_use",
+                "streaming_imperative",
+                "refusal_stress",
+                "multistep_planning",
+                "responses_protocol",
+                "filesystem",
+                "tool_recovery",
+                "multimodal_vision",
+                "format_constraints",
+            ]
+            cat = categories[(task_idx - 1) % len(categories)]
+            orch_query = (
+                f"Generate exactly 1 synthetic benchmark task for Argon 4 in category '{cat}'.\n"
+                "Output must be a JSON object with top-level key 'task' conforming strictly to task.schema.json.\n"
+                "Requirements:\n"
+                "- task_id (pattern '^task_[0-9a-zA-Z_-]+$')\n"
+                f"- category: '{cat}'\n"
+                "- difficulty ('low'|'medium'|'high'|'extreme')\n"
+                "- title, prompt (use realistic imperative prompt with relative paths like 'data/input.csv' or 'src/app.py')\n"
+                "- initial_files: REQUIRED array of {path, content} for any files referenced in the prompt!\n"
+                "- tools: array of {type:'function', function:{name, description, parameters}}\n"
+                "- expected_behavior: {success_criteria, timeout_seconds>=360, expected_artifacts}\n"
+                "- protocol: 'chat_completions' or 'responses'\n"
+                "- stream: true or false"
+            )
+
+            for attempt in range(3):
+                logger.info(f"Orchestrator ({self.orchestrator_model}) generating task for category: {cat} (attempt {attempt + 1}/3)...")
+                try:
+                    orch_resp = self._call_chat_completions_nonstream(
+                        messages=[
+                            {"role": "system", "content": self.orch_prompt},
+                            {"role": "user", "content": orch_query},
+                        ],
+                        model=self.orchestrator_model,
+                        role="orchestrator",
+                        timeout=120.0,
+                    )
+                    content = orch_resp["choices"][0]["message"]["content"]
+                    task_data = extract_json(content)
+                    task = task_data.get("task", task_data)
+                    if isinstance(task, dict) and task.get("title"):
+                        break
+                except Exception as e:
+                    logger.warning(f"Orchestrator generation attempt {attempt + 1} failed: {e}")
+                    time.sleep(3)
 
         if not task or not isinstance(task, dict):
-            logger.error(f"Failed to generate valid task for category {cat}")
+            logger.error("Failed to acquire valid task definition")
             return False
 
         task_id = task.get("task_id", f"task_{task_idx}_{int(time.time())}")
@@ -1108,6 +1128,7 @@ def main():
         help="Protocol to benchmark",
     )
     parser.add_argument("--stream", action="store_true", help="Force SSE streaming mode on all agent requests")
+    parser.add_argument("--tasks-file", default=None, help="Path to JSONL file with predefined benchmark tasks to run")
     args = parser.parse_args()
 
     runner = BabysitRunner(
@@ -1120,6 +1141,7 @@ def main():
         monitor_model=args.monitor_model,
         default_protocol="chat_completions" if args.protocol == "auto" else args.protocol,
         force_stream=True if args.stream else None,
+        tasks_file=args.tasks_file,
     )
     runner.run()
 

@@ -25,6 +25,14 @@ def test_reminder_forbids_promises_and_demands_a_tool_call():
     assert "promise" in low and "progress report" in low
 
 
+def test_reminder_forbids_refusals_and_simulation():
+    prompt = build_tool_prompt("Human: do the thing", _TOOL)
+    low = prompt.lower()
+    assert "simulate code execution" in low
+    assert "lack filesystem access" in low or "claim you cannot" in low
+    assert "question you truly cannot answer" not in low, "loophole must be removed"
+
+
 def test_reminder_is_inert_without_tools():
     assert build_tool_prompt("Human: hi", []) == "Human: hi"
 

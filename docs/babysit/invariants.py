@@ -163,6 +163,94 @@ def check_prose_refusal_instead_of_tool(
     return None
 
 
+_SIMULATED_CODE_PATTERNS = (
+    r"import\s+subprocess\b",
+    r"from\s+subprocess\s+import",
+    r"\bsubprocess\.(?:run|Popen|check_output|call)\b",
+    r"\bos\.(?:system|popen|listdir|walk)\b",
+    r"\b(?:Get-ChildItem|Select-Object|Where-Object)\b",
+    r"\bgit\s+(?:log|status|diff|checkout|branch)\b",
+    r"\bpython(?:\.exe)?\s+scripts[\\/]",
+    r"\bopen\(.+?,\s*[\"']r[\"']\)",
+)
+_SIMULATED_CODE_RE = re.compile("|".join(_SIMULATED_CODE_PATTERNS), re.IGNORECASE)
+
+
+def check_simulated_code_execution(
+    message: Dict[str, Any],
+    tools_available: bool,
+) -> Optional[Dict[str, Any]]:
+    """Check if the agent emitted a code block simulating execution instead of calling available tools."""
+    if not tools_available:
+        return None
+
+    tool_calls = message.get("tool_calls") or []
+    if tool_calls:
+        return None
+
+    content = message.get("content") or ""
+    if not content or "```" not in content:
+        return None
+
+    code_blocks = re.findall(r"```(?:[a-zA-Z0-9_-]+)?\s*([\s\S]*?)```", content)
+    for block in code_blocks:
+        match = _SIMULATED_CODE_RE.search(block)
+        if match:
+            return {
+                "matched_pattern": match.group(0),
+                "snippet": block[:300].strip(),
+                "description": f"Model emitted code block simulating command/script execution ('{match.group(0)}') instead of invoking available tools",
+            }
+    return None
+
+
+def check_unverified_investigation_prose(
+    task: Dict[str, Any],
+    turns_history: List[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """Check if the agent produced a final structured investigation report with zero tool calls."""
+    if not task.get("tools") or not turns_history:
+        return None
+
+    total_tool_calls = 0
+    for turn in turns_history:
+        resp = turn.get("response") or {}
+        choices = resp.get("choices") or []
+        msg = choices[0].get("message") if choices else {}
+        calls = msg.get("tool_calls") or []
+        total_tool_calls += len(calls)
+
+    if total_tool_calls > 0:
+        return None
+
+    last_turn = turns_history[-1]
+    resp = last_turn.get("response") or {}
+    choices = resp.get("choices") or []
+    msg = choices[0].get("message") if choices else {}
+    content = msg.get("content") or ""
+
+    if len(content) < 150:
+        return None
+
+    prompt = task.get("prompt", "").lower()
+    cat = task.get("category", "")
+    is_investigation = (
+        cat in ("investigation", "tool_use", "filesystem", "multistep_planning")
+        or any(kw in prompt for kw in ("investigation", "inspect", "audit", "run:", "check if", "list all open", "read evals/"))
+    )
+
+    if not is_investigation:
+        return None
+
+    has_report_headings = bool(re.search(r"(?:###?\s*(?:BLOCKERS|REDTEAM|STATUS|REPORT|GAPS|FINDINGS|AUDIT)|#\s+.+Report)", content, re.IGNORECASE))
+    if has_report_headings:
+        return {
+            "content_snippet": content[:300].strip(),
+            "description": "Agent produced structured investigation report with zero tool executions (hallucinated verification)",
+        }
+    return None
+
+
 def _normalize_tool_args(args_val: Any) -> str:
     """Normalize tool arguments for semantic loop comparison."""
     if isinstance(args_val, dict):
@@ -337,6 +425,27 @@ def run_all_semantic_invariants(
                 "proposed_fix": "Supply realistic imperative prompts and pre-seeded files to prevent agent refusal.",
             })
 
+        # 3b. Simulated code execution check
+        sim_code = check_simulated_code_execution(msg, has_tools)
+        if sim_code:
+            findings.append({
+                "invariant_type": "simulated_code_execution",
+                "category": "argon",
+                "severity": "error",
+                "confidence": 0.98,
+                "summary": f"Turn {turn_idx}: {sim_code['description']}",
+                "evidence": {
+                    "request_id": req_id,
+                    "timestamp": ts,
+                    "quoted_log": sim_code["snippet"],
+                    "metric_name": "turn_index",
+                    "metric_value": turn_idx,
+                    "task_id": task_id,
+                },
+                "root_cause_hypothesis": "Argon roleplayed Python/shell execution inside a Markdown code block instead of invoking available tools.",
+                "proposed_fix": "Intercept simulated execution blocks in proxy and demand JSON tool_call execution.",
+            })
+
         # 4. Turn-level streaming checks
         st = turn.get("streaming_telemetry") or {}
         if st.get("stream"):
@@ -419,6 +528,28 @@ def run_all_semantic_invariants(
             },
             "root_cause_hypothesis": "Agent failed to inspect tool error feedback and repeatedly attempted the identical failing invocation.",
             "proposed_fix": "Inject error recovery hints or abort repetitive loops early.",
+        })
+
+    # 4b. Unverified investigation prose check
+    unverified = check_unverified_investigation_prose(task, turns_history)
+    if unverified:
+        latest_telemetry = turns_history[-1].get("proxy_telemetry", {}) if turns_history else {}
+        findings.append({
+            "invariant_type": "unverified_investigation_prose",
+            "category": "argon",
+            "severity": "critical",
+            "confidence": 0.99,
+            "summary": unverified["description"],
+            "evidence": {
+                "request_id": latest_telemetry.get("request_id") or "n/a",
+                "timestamp": turns_history[-1].get("timestamp") if turns_history else "n/a",
+                "quoted_log": unverified["content_snippet"],
+                "metric_name": "total_tool_calls",
+                "metric_value": 0,
+                "task_id": task_id,
+            },
+            "root_cause_hypothesis": "Argon fabricated investigation conclusions out of pre-training weights without inspecting files or running commands.",
+            "proposed_fix": "Reinforce grounding invariants and reject premature reports on zero-tool turns.",
         })
 
     # 5. Global streaming checks (if streaming chunks passed directly)

@@ -277,13 +277,14 @@ def maybe_image_generation_intent(text: str) -> bool:
 # instruction voice and deliberately blunt: "promise" phrasing is what makes a harness end the turn.
 TOOL_LOOP_REMINDER = (
     "[MANDATORY — READ BEFORE ANSWERING]\n"
-    "You are inside a tool loop. If the task needs a command, a file read or a file write, you MUST output "
+    "You are inside an autonomous tool execution loop. If the task needs a command, a file read or a file write, you MUST output "
     "the JSON tool_calls array immediately, with no surrounding prose — do it in this message.\n"
     "Do NOT describe what a tool or sub-agent will do. Never answer with a promise, a plan, a status update or "
     "a progress report ('I will inspect...', 'Let me check...', 'Working on it...', 'I'll let you know...'). "
     "Those end the turn and the work stops.\n"
-    "Text is only for the FINAL answer, after the work is done and verified, or for a question you truly "
-    "cannot answer with the tools you have."
+    "NEVER simulate code execution in Markdown code blocks. NEVER claim you lack filesystem access "
+    "or local terminal tools. Text is strictly reserved for the final answer AFTER tools have been "
+    "executed and verified."
 )
 
 

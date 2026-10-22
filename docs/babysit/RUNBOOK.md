@@ -74,6 +74,12 @@ python docs/babysit/runner.py --run-id "20261019-exp03-stream" --max-tasks 5 --s
 python docs/babysit/runner.py --run-id "20261019-exp03-resp" --max-tasks 5 --protocol responses --stream
 ```
 
+### Investigation & Anti-Hallucination Benchmark (Catching Simulated Code & Prose Reports):
+To test Argon on empirical repository audits and verify that it invokes real tools instead of simulating code execution or generating fabricated reports:
+```powershell
+python docs/babysit/runner.py --run-id "20261022-exp05-investigation" --tasks-file docs/babysit/tasks_investigation.jsonl --stream
+```
+
 ### Resuming an Interrupted Run:
 If a run stops or crashes, resume it without repeating finished tasks:
 ```powershell

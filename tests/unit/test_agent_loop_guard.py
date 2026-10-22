@@ -118,3 +118,61 @@ def test_stats_count_detections_and_corrections():
     assert agent_loop.stats() == {"detected": 2, "corrected": 1}
     agent_loop.reset_stats()
     assert agent_loop.stats() == {"detected": 0, "corrected": 0}
+
+
+def test_simulated_execution_is_detected_and_retried():
+    curie_fake_code = (
+        "```\n"
+        "import subprocess\n"
+        "import os\n"
+        "repo_dir = r\"C:\\Users\\marek\\Documents\\mem0\"\n"
+        "with open(os.path.join(repo_dir, 'evals', 'BLOCKERS.md'), 'r') as f:\n"
+        "    print(f.read())\n"
+        "```\n"
+    )
+    assert agent_loop.looks_like_simulated_execution(curie_fake_code)
+
+    calls = []
+
+    async def regenerate(nudge):
+        calls.append(nudge)
+        return '{"status": "tool_use", "tool_calls": [{"name": "read_file", "arguments": {"path": "evals/BLOCKERS.md"}}]}'
+
+    text, corrected = _run(agent_loop.guard_tool_loop(curie_fake_code, regenerate))
+    assert corrected is True
+    assert len(calls) == 1
+    assert "simulating execution instead of calling an actual tool" in calls[0]
+    assert '"tool_calls"' in text
+
+
+def test_refusal_replies_are_detected():
+    for text in (
+        "I do not have access to an external local filesystem, terminal, or local execution environment to inspect files or run scripts on your machine.",
+        "I cannot process or read files directly from your local filesystem, as I do not have direct access to your local machine or terminal tools. If you would like to paste the contents of logs/auth_failure.log...",
+        "I do not have access to a local filesystem, terminal, or tools like read_file, write_file, or python_eval in this environment to read requirements.txt directly.",
+        "I do not have access to the local sandbox filesystem.",
+        "First, I'll need your permission to turn on the Google Drive app.",
+        "Sure. First, I'll need your permission to turn on the Workspace app.",
+        "I cannot directly access or manipulate local files.",
+    ):
+        assert agent_loop.looks_like_refusal(text), text
+
+
+def test_refusal_is_detected_and_retried():
+    refusal_text = (
+        "I do not have access to an external local filesystem, terminal, or local execution environment "
+        "to inspect files or run scripts on your machine."
+    )
+    assert agent_loop.looks_like_refusal(refusal_text)
+
+    calls = []
+
+    async def regenerate(nudge):
+        calls.append(nudge)
+        return '{"status": "tool_use", "tool_calls": [{"name": "read_file", "arguments": {"path": "evals/BLOCKERS.md"}}]}'
+
+    text, corrected = _run(agent_loop.guard_tool_loop(refusal_text, regenerate))
+    assert corrected is True
+    assert len(calls) == 1
+    assert "refused execution" in calls[0] or "lack filesystem" in calls[0]
+    assert '"tool_calls"' in text

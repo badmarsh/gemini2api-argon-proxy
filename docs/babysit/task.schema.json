@@ -32,7 +32,8 @@
         "streaming_imperative",
         "refusal_stress",
         "responses_protocol",
-        "multimodal_vision"
+        "multimodal_vision",
+        "investigation"
       ],
       "description": "Taxonomy category of the task"
     },
