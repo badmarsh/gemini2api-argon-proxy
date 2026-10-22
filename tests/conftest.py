@@ -92,3 +92,11 @@ def gem_client(app_main, tmp_path):
     app_main.app.state.model_mapping = ModelMapping(path=str(tmp_path / "mm.json"))
     app_main.app.state.gem_mapping = GemMapping(path=str(tmp_path / "gm.json"))
     return TestClient(app_main.app)
+
+
+@pytest.fixture(autouse=True)
+def reset_admin_auth_limiter_fixture():
+    from app.core.auth import reset_admin_rate_limiter
+    reset_admin_rate_limiter()
+    yield
+    reset_admin_rate_limiter()

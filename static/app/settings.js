@@ -105,11 +105,12 @@ function isFloatField(key) {
 
 function createFieldInput(key, value) {
   const type = typeof value;
+  const escapedKey = escapeAttr(key);
 
   if (type === 'boolean') {
     return `
       <label class="toggle-switch">
-        <input type="checkbox" data-key="${key}" ${value ? 'checked' : ''}>
+        <input type="checkbox" data-key="${escapedKey}" ${value ? 'checked' : ''}>
       </label>
     `;
   }
@@ -117,16 +118,16 @@ function createFieldInput(key, value) {
   const fieldName = String(key).split('.').pop();
   if (SELECT_OPTIONS[fieldName]) {
     const options = SELECT_OPTIONS[fieldName].map(opt =>
-      `<option value="${opt.value}" ${value === opt.value ? 'selected' : ''}>${t(opt.labelKey)}</option>`
+      `<option value="${escapeAttr(opt.value)}" ${value === opt.value ? 'selected' : ''}>${escapeHtml(t(opt.labelKey))}</option>`
     ).join('');
-    return `<select class="form-control" data-key="${key}">${options}</select>`;
+    return `<select class="form-control" data-key="${escapedKey}">${options}</select>`;
   }
 
   if (key.endsWith('.rotation_strategy')) {
     const radios = ROTATION_OPTIONS.map(opt =>
       `<label class="radio-option">
-        <input type="radio" name="rotation_strategy" data-key="${key}" value="${opt.value}" ${value === opt.value ? 'checked' : ''}>
-        <span>${t(opt.labelKey)}</span>
+        <input type="radio" name="rotation_strategy" data-key="${escapedKey}" value="${escapeAttr(opt.value)}" ${value === opt.value ? 'checked' : ''}>
+        <span>${escapeHtml(t(opt.labelKey))}</span>
       </label>`
     ).join('');
     return `<div class="radio-group">${radios}</div>`;
@@ -135,10 +136,10 @@ function createFieldInput(key, value) {
   if (type === 'number') {
     // step is both input constraint and signal for collectFormValues (parseFloat vs parseInt)
     const step = isFloatField(key) ? 'any' : '1';
-    return `<input type="number" class="form-control" data-key="${key}" step="${step}" value="${value}">`;
+    return `<input type="number" class="form-control" data-key="${escapedKey}" step="${step}" value="${escapeAttr(value)}">`;
   }
 
-  return `<input type="text" class="form-control" data-key="${key}" value="${value}">`;
+  return `<input type="text" class="form-control" data-key="${escapedKey}" value="${escapeAttr(value)}">`;
 }
 
 function renderSettings(settings) {
@@ -152,7 +153,7 @@ function renderSettings(settings) {
     const groupIcon = GROUP_ICONS[groupKey] || 'fa-cog';
 
     html += '<div class="settings-group">';
-    html += '<h3><i class="fas ' + groupIcon + '"></i> ' + groupTitle + '</h3>';
+    html += '<h3><i class="fas ' + escapeAttr(groupIcon) + '"></i> ' + escapeHtml(groupTitle) + '</h3>';
     html += '<div class="settings-fields">';
 
     for (const [key, value] of Object.entries(groupSettings)) {
@@ -160,7 +161,7 @@ function renderSettings(settings) {
       const fullKey = groupKey + '.' + key;
       const input = createFieldInput(fullKey, value);
       const hint = getFieldHint(key);
-      html += '<div class="setting-field"><label>' + label + '</label>' + input +
+      html += '<div class="setting-field"><label>' + escapeHtml(label) + '</label>' + input +
         (hint ? '<small class="form-hint">' + escapeHtml(hint) + '</small>' : '') + '</div>';
     }
 

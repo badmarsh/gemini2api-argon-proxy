@@ -4,7 +4,7 @@
 
 import { initializeComponents } from './component-loader.js';
 import { initThemeSwitcher } from './theme-switcher.js';
-import { initAuth, apiCall, logout } from './auth.js';
+import { initAuth, apiCall, logout, getToken } from './auth.js';
 import { showToast, formatNumber, getStatusBadge, maskString, copyToClipboard, showConfirm, formatDate } from './utils.js';
 import { initUsageStats, loadUsageStats } from './usage-chart.js';
 import { initLogs, loadLogs, setLogsPollingActive } from './logs.js';
@@ -2186,10 +2186,18 @@ function initEventListeners() {
             btn.addEventListener('click', async () => {
                 const pre = btn.closest('.snippet-code-wrap')?.querySelector('pre');
                 if (!pre || !pre.textContent) return;
+                const token = getToken();
+                let codeToCopy = pre.textContent.trim();
+                if (token && codeToCopy.includes('YOUR_API_KEY')) {
+                    codeToCopy = codeToCopy.replaceAll('YOUR_API_KEY', token);
+                }
+                if (window.location && window.location.origin && window.location.origin.startsWith('http')) {
+                    codeToCopy = codeToCopy.replaceAll('http://localhost:5918', window.location.origin);
+                }
                 const icon = btn.querySelector('i');
                 const label = btn.querySelector('span');
                 try {
-                    const copied = await copyToClipboard(pre.textContent.trim());
+                    const copied = await copyToClipboard(codeToCopy);
                     if (!copied) throw new Error('clipboard unavailable');
                     if (icon) icon.className = 'fas fa-check';
                     if (label) label.textContent = t('dashboard.copied');

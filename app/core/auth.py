@@ -1,10 +1,14 @@
+import collections
 import logging
 import secrets
+import time
 from pathlib import PurePosixPath
+from threading import Lock
 
 from fastapi import Request, HTTPException
 
 from app.config import settings
+from app.core.limiter import _client_ip_key
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +26,74 @@ _STATIC_SAFE_METHODS = frozenset({"GET", "HEAD"})
 # API / admin namespaces. Paths under these prefixes are never eligible for the
 # static-extension bypass, whatever their suffix looks like.
 _PROTECTED_PREFIXES = ("/admin", "/v1", "/v1beta", "/openai", "/claude", "/gemini")
+
+
+class AdminAuthRateLimiter:
+    """Tracks failed admin authentication attempts per client IP to prevent brute-forcing.
+
+    Defaults to a 60-second window, max 5 failed attempts, with a 60-second lockout period.
+    """
+
+    def __init__(self, max_attempts: int = 5, window_seconds: float = 60.0, lockout_seconds: float = 60.0):
+        self.max_attempts = max_attempts
+        self.window_seconds = window_seconds
+        self.lockout_seconds = lockout_seconds
+        self._lock = Lock()
+        self._failures: dict[str, list[float]] = collections.defaultdict(list)
+        self._lockouts: dict[str, float] = {}
+
+    def is_locked(self, ip: str, now: float | None = None) -> tuple[bool, int]:
+        """Returns (is_locked, retry_after_seconds)."""
+        now = time.time() if now is None else now
+        with self._lock:
+            locked_until = self._lockouts.get(ip, 0.0)
+            if now < locked_until:
+                return True, max(1, int(locked_until - now))
+            elif locked_until > 0.0:
+                del self._lockouts[ip]
+
+            cutoff = now - self.window_seconds
+            timestamps = [t for t in self._failures.get(ip, []) if t > cutoff]
+            if timestamps:
+                self._failures[ip] = timestamps
+            elif ip in self._failures:
+                del self._failures[ip]
+
+            if len(timestamps) >= self.max_attempts:
+                self._lockouts[ip] = now + self.lockout_seconds
+                self._failures.pop(ip, None)
+                return True, int(self.lockout_seconds)
+
+            return False, 0
+
+    def record_failure(self, ip: str, now: float | None = None) -> None:
+        now = time.time() if now is None else now
+        with self._lock:
+            cutoff = now - self.window_seconds
+            timestamps = [t for t in self._failures.get(ip, []) if t > cutoff]
+            timestamps.append(now)
+            if len(timestamps) >= self.max_attempts:
+                self._lockouts[ip] = now + self.lockout_seconds
+                self._failures.pop(ip, None)
+            else:
+                self._failures[ip] = timestamps
+
+    def record_success(self, ip: str) -> None:
+        with self._lock:
+            self._failures.pop(ip, None)
+            self._lockouts.pop(ip, None)
+
+    def reset(self) -> None:
+        with self._lock:
+            self._failures.clear()
+            self._lockouts.clear()
+
+
+_admin_auth_limiter = AdminAuthRateLimiter()
+
+
+def reset_admin_rate_limiter() -> None:
+    _admin_auth_limiter.reset()
 
 
 def _has_protected_prefix(path: str) -> bool:
@@ -87,6 +159,14 @@ def _invalid_key_error() -> HTTPException:
     )
 
 
+def _rate_limited_error(retry_after: int) -> HTTPException:
+    return HTTPException(
+        status_code=429,
+        detail={"error": {"message": f"Too many failed login attempts. Please try again after {retry_after}s.", "type": "rate_limit"}},
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
 async def verify_api_key(request: Request):
     """业务 API 全局鉴权。管理类路径(/admin/*)交由 verify_admin_key 校验，此处放行避免双重校验。"""
     path = request.url.path
@@ -111,6 +191,11 @@ async def verify_admin_key(request: Request):
 
     Admin routes are never public: no static-extension or other path-based exemption applies here.
     """
+    ip = _client_ip_key(request)
+    is_locked, retry_after = _admin_auth_limiter.is_locked(ip)
+    if is_locked:
+        raise _rate_limited_error(retry_after)
+
     admin_key = (settings.admin_api_key or "").strip()
     expected = admin_key if admin_key else settings.api_key
 
@@ -119,4 +204,7 @@ async def verify_admin_key(request: Request):
         raise _missing_key_error()
 
     if not _key_matches(key, expected):
+        _admin_auth_limiter.record_failure(ip)
         raise _invalid_key_error()
+
+    _admin_auth_limiter.record_success(ip)

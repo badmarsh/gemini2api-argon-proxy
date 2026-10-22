@@ -1,6 +1,8 @@
 /**
  * Safe Storage Service
  * Resilient localStorage wrapper with in-memory fallback, quota safety, and sensitive data obfuscation.
+ * NOTE: SafeStorage obfuscation is lightweight visual masking for local storage inspection,
+ * not a cryptographic confidentiality boundary against arbitrary same-origin script execution (XSS).
  */
 
 class MemoryStorage {
@@ -133,15 +135,18 @@ class SafeStorage {
             return;
         }
         try {
-            const str = String(secretValue);
-            // XOR mask with salt + Base64
-            let encoded = '';
-            for (let i = 0; i < str.length; i++) {
-                const charCode = str.charCodeAt(i) ^ this._salt.charCodeAt(i % this._salt.length);
-                encoded += String.fromCharCode(charCode);
+            const encoder = new TextEncoder();
+            const rawBytes = encoder.encode(String(secretValue));
+            const saltBytes = encoder.encode(this._salt);
+            const masked = new Uint8Array(rawBytes.length);
+            for (let i = 0; i < rawBytes.length; i++) {
+                masked[i] = rawBytes[i] ^ saltBytes[i % saltBytes.length];
             }
-            const b64 = btoa(unescape(encodeURIComponent(encoded)));
-            this.setItem(key, `enc:v1:${b64}`);
+            let binary = '';
+            for (let i = 0; i < masked.length; i++) {
+                binary += String.fromCharCode(masked[i]);
+            }
+            this.setItem(key, `enc:v1:${btoa(binary)}`);
         } catch (_) {
             // If encoding fails, fallback to standard memory storage to avoid raw persistence
             this._memory.setItem(key, String(secretValue));
@@ -157,15 +162,29 @@ class SafeStorage {
         if (typeof raw === 'string' && raw.startsWith('enc:v1:')) {
             try {
                 const b64 = raw.slice(7);
-                const decoded = decodeURIComponent(escape(atob(b64)));
-                let unmasked = '';
-                for (let i = 0; i < decoded.length; i++) {
-                    const charCode = decoded.charCodeAt(i) ^ this._salt.charCodeAt(i % this._salt.length);
-                    unmasked += String.fromCharCode(charCode);
+                const binary = atob(b64);
+                const encoder = new TextEncoder();
+                const saltBytes = encoder.encode(this._salt);
+                const unmasked = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {
+                    unmasked[i] = binary.charCodeAt(i) ^ saltBytes[i % saltBytes.length];
                 }
-                return unmasked;
+                const decoder = new TextDecoder();
+                return decoder.decode(unmasked);
             } catch (_) {
-                return null;
+                // Fallback for legacy UTF-8 escape decode
+                try {
+                    const b64 = raw.slice(7);
+                    const decoded = decodeURIComponent(escape(atob(b64)));
+                    let legacyUnmasked = '';
+                    for (let i = 0; i < decoded.length; i++) {
+                        const charCode = decoded.charCodeAt(i) ^ this._salt.charCodeAt(i % this._salt.length);
+                        legacyUnmasked += String.fromCharCode(charCode);
+                    }
+                    return legacyUnmasked;
+                } catch (__) {
+                    return null;
+                }
             }
         }
         // Backward compatibility if plain token was stored previously: migrate to secure

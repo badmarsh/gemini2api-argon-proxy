@@ -18,7 +18,7 @@ function escapeAttr(value) {
 
 let pollTimer = null;
 let currentDirection = 'all';
-let currentTrafficType = 'completions';
+let currentTrafficType = 'ai';
 let currentSearch = '';
 let currentOffset = 0;
 const PAGE_SIZE = APP_CONSTANTS.LIMITS.PAGE_SIZE_LOGS;
@@ -116,6 +116,7 @@ function initLogControls() {
     const nextBtn = document.getElementById('log-next-btn');
     if (nextBtn) {
         nextBtn.addEventListener('click', () => {
+            if (nextBtn.disabled) return;
             currentOffset += PAGE_SIZE;
             consecutiveErrors = 0;
             loadLogs();
@@ -143,10 +144,6 @@ function stopPolling() {
     if (pollTimer) {
         clearInterval(pollTimer);
         pollTimer = null;
-    }
-    if (inFlightController) {
-        inFlightController.abort();
-        inFlightController = null;
     }
 }
 
@@ -213,6 +210,8 @@ export async function loadLogs(resetCircuitBreaker = true) {
         if (currentOffset >= total && total > 0) {
             currentOffset = Math.floor((total - 1) / PAGE_SIZE) * PAGE_SIZE;
             return loadLogs(false);
+        } else if (total === 0) {
+            currentOffset = 0;
         }
 
         const records = data.records || [];

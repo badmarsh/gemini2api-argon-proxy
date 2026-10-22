@@ -29,7 +29,9 @@
             --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
         }
 
-        [data-theme="dark"] {
+        [data-theme="dark"],
+        [data-theme="vercel-dark"],
+        [data-theme="supabase-dark"] {
             --primary-color: #34d399;
             --primary-hover: #10b981;
             --btn-text: #0b1f17;
@@ -183,7 +185,9 @@
             animation: spin 0.6s linear infinite;
         }
 
-        [data-theme="dark"] .spinner {
+        [data-theme="dark"] .spinner,
+        [data-theme="vercel-dark"] .spinner,
+        [data-theme="supabase-dark"] .spinner {
             border-color: rgba(11, 31, 23, 0.3);
             border-top-color: #0b1f17;
         }
@@ -315,17 +319,25 @@
         const themeIcon = document.getElementById('themeIcon');
         const html = document.documentElement;
 
+        function isDarkTheme(theme) {
+            if (!theme) return false;
+            return theme === 'dark' || theme.includes('dark');
+        }
+
         // Load saved theme
         const savedTheme = safeStorage.getItem(APP_CONSTANTS.STORAGE_KEYS.THEME) || 'light';
-        html.setAttribute('data-theme', savedTheme);
-        updateThemeIcon(savedTheme);
+        const initialDark = isDarkTheme(savedTheme) || (!savedTheme && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        const activeTheme = initialDark ? (savedTheme.includes('dark') ? savedTheme : 'vercel-dark') : 'light';
+        html.setAttribute('data-theme', activeTheme);
+        updateThemeIcon(initialDark ? 'dark' : 'light');
 
         themeToggle.addEventListener('click', () => {
             const currentTheme = html.getAttribute('data-theme');
-            const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+            const currentlyDark = isDarkTheme(currentTheme);
+            const newTheme = currentlyDark ? 'light' : 'vercel-dark';
             html.setAttribute('data-theme', newTheme);
             safeStorage.setItem(APP_CONSTANTS.STORAGE_KEYS.THEME, newTheme);
-            updateThemeIcon(newTheme);
+            updateThemeIcon(!currentlyDark ? 'dark' : 'light');
         });
 
         function updateThemeIcon(theme) {
@@ -380,6 +392,17 @@
                     setTimeout(() => {
                         window.location.href = '/index.html';
                     }, 500);
+                } else if (response.status === 429) {
+                    const retrySec = parseInt(response.headers.get('Retry-After') || '60', 10);
+                    showError(`Too many failed attempts. Locked out for ${retrySec}s.`);
+                    remainingAttempts = 0;
+                    loginButton.disabled = true;
+                    setTimeout(() => {
+                        remainingAttempts = MAX_ATTEMPTS;
+                        loginButton.disabled = false;
+                        hideError();
+                    }, retrySec * 1000);
+                    setLoading(false);
                 } else if (response.status === 401 || response.status === 403) {
                     remainingAttempts--;
                     if (remainingAttempts > 0) {
@@ -390,6 +413,7 @@
                         setTimeout(() => {
                             remainingAttempts = MAX_ATTEMPTS;
                             loginButton.disabled = false;
+                            hideError();
                         }, 60000);
                     }
                     setLoading(false);
